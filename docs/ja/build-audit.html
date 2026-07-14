@@ -15,7 +15,7 @@
 <a href="#main" class="skip">本文へスキップ</a>
 
 <header class="page-header">
-    <nav class="section-nav"><a href="../algorithm.html">アルゴリズム</a> · <a href="../perf.html">性能</a> · <a href="../security.html">セキュリティ</a> · <a href="../faq.html">FAQ</a> · <strong>ビルド監査</strong> · <a href="../index.html">↑ サイト</a></nav>
+    <nav class="section-nav"><a href="../algorithm.html">アルゴリズム</a> · <a href="../perf.html">性能</a> · <a href="../security.html">セキュリティ</a> · <a href="../faq.html">FAQ</a> · <strong>ビルド監査</strong> · <a href="../index.html">↑ ホーム</a></nav>
     <div class="lang-switch"><a href="../build-audit.html">en</a> · <a href="../zh-CN/build-audit.html">zh-CN</a> · <a href="../zh-TW/build-audit.html">zh-TW</a> · <strong>ja</strong></div>
 </header>
 
@@ -48,6 +48,15 @@
         各リスクを列挙し、現在の緩和策（または非対応）と
         1 行でできる修正案を併記します。</p>
 </aside>
+
+    <aside class="tldr" id="usage">
+        <p><b>使い方。</b>4つのコマンド &mdash; 圧縮、展開、一覧、出力：</p>
+        <pre><code>  lha c archive.lzh file1 file2   # 圧縮
+      lha x archive.lzh               # 展開
+      lha l archive.lzh               # 一覧（ls）
+      lha p archive.lzh file          # 標準出力へ表示（cat）</code></pre>
+        <p class="cpu-note">インストール：<code>x eget use lha</code> &middot; 静的バイナリ，~150 KB，依存なし</p>
+    </aside>
 
 <section id="toolchain">
     <h2>1. ビルドツールチェーンリスク</h2>

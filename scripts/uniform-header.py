@@ -1,32 +1,48 @@
 #!/usr/bin/env python3
 """
-Refactor ljh-sh/lha Pages site: every non-index page gets the SAME
-section nav (6 items, page-language labels, current page as <strong>).
+Refactor ljh-sh/lha Pages site: every page gets a section nav.
 
-Sections (in order):
-  algorithm, perf, security, faq, build-audit, ↑ 站点(=home)
+  - Homepage (index.html): 4-item nav that mostly goes OFF site
+    (Latest release + Upstream are github.com links; Build audit
+    + Algorithm are internal).
+  - Other pages: 6-item nav in the page's own language
+    (algorithm · perf · security · faq · build-audit · ↑ home).
 
-The current page renders as <strong>; others are <a> with relative paths.
-
-Language labels (per the page's own lang attribute):
-  en:    algorithm · perf · security · faq · build audit · ↑ site
-  zh-CN: 算法 · 性能 · 安全 · 常见问题 · 构建审计 · ↑ 站点
-  zh-TW: 演算法 · 效能 · 資安 · 常見問題 · 建置稽核 · ↑ 站台
-  ja:    アルゴリズム · 性能 · セキュリティ · FAQ · ビルド監査 · ↑ サイト
+The current page item is rendered as <strong>; others as <a href>.
 """
 import re, sys
 from pathlib import Path
 
-# Per-language label sets
-LABELS = {
-    'en':    ['algorithm', 'perf', 'security', 'faq', 'build audit', '↑ site'],
-    'zh-CN': ['算法',       '性能', '安全',    '常见问题', '构建审计', '↑ 站点'],
-    'zh-TW': ['演算法',    '效能', '資安',    '常見問題', '建置稽核', '↑ 站台'],
-    'ja':    ['アルゴリズム', '性能', 'セキュリティ', 'FAQ', 'ビルド監査', '↑ サイト'],
+# Per-language label sets for the section nav on each page type.
+# Index/homepage labels: short list of "off-site and primary-internal".
+INDEX_LABELS = {
+    'en':    [('Latest release',  'https://github.com/ljh-sh/lha/releases'),
+              ('Upstream',        'https://github.com/jca02266/lha'),
+              ('Build audit',     'build-audit.html'),
+              ('Algorithm',       'algorithm.html')],
+    'zh-CN': [('最新发布',         'https://github.com/ljh-sh/lha/releases'),
+              ('上游源码',         'https://github.com/jca02266/lha'),
+              ('构建审计',         'build-audit.html'),
+              ('算法',             'algorithm.html')],
+    'zh-TW': [('最新發佈',         'https://github.com/ljh-sh/lha/releases'),
+              ('上游原始碼',       'https://github.com/jca02266/lha'),
+              ('建置稽核',         'build-audit.html'),
+              ('演算法',           'algorithm.html')],
+    'ja':    [('最新リリース',     'https://github.com/ljh-sh/lha/releases'),
+              ('上流',             'https://github.com/jca02266/lha'),
+              ('ビルド監査',       'build-audit.html'),
+              ('アルゴリズム',     'algorithm.html')],
 }
-FILES = ['algorithm', 'perf', 'security', 'faq', 'build-audit']
 
-# Map html <html lang="..."> to our label set
+# Sections for non-homepages, with per-language labels.
+SECTION_LABELS = {
+    'en':    ['algorithm', 'perf', 'security', 'faq', 'build audit', '↑ home'],
+    'zh-CN': ['算法',       '性能', '安全',    '常见问题', '构建审计', '↑ 首页'],
+    'zh-TW': ['演算法',    '效能', '資安',    '常見問題', '建置稽核', '↑ 首頁'],
+    'ja':    ['アルゴリズム', '性能', 'セキュリティ', 'FAQ', 'ビルド監査', '↑ ホーム'],
+}
+SECTIONS = ['algorithm', 'perf', 'security', 'faq', 'build-audit']
+
 HTML_LANG_MAP = {
     'en':    'en',
     'zh-CN': 'zh-CN',
@@ -34,41 +50,43 @@ HTML_LANG_MAP = {
     'ja':    'ja',
 }
 
-def render_section_nav(lang_code, current_file, is_top_level):
-    """Return inner HTML for <nav class=\"section-nav\"> with the
-    current file rendered as <strong>, others as <a href>.
 
-    For top-level pages, sibling hrefs are relative filenames like
-    'perf.html'. For per-language pages, we go up one and into the
-    same-named file: '../perf.html'. For ↑ 站点 it's always
-    '../index.html' (since home is at top-level)."""
-    labels = LABELS[lang_code]
+def render_index_nav(lang_code, is_top_level):
+    """Homepage section nav: 4 items (2 external + 2 internal).
+    Internal hrefs get '../' prefix when on per-language homepage."""
     prefix = '' if is_top_level else '../'
     parts = []
-    for i, name in enumerate(FILES):
+    for label, href in INDEX_LABELS[lang_code]:
+        # External links keep their full URL; internal links get the prefix.
+        full_href = href if href.startswith('http') else prefix + href
+        parts.append('<a href="' + full_href + '">' + label + '</a>')
+    return ' · '.join(parts)
+
+
+def render_section_nav(lang_code, current_file, is_top_level):
+    """Non-homepage section nav. The current section is rendered
+    as <strong>; home ('↑ home') gets <strong> on the homepage only."""
+    labels = SECTION_LABELS[lang_code]
+    prefix = '' if is_top_level else '../'
+    parts = []
+    for i, name in enumerate(SECTIONS):
         label = labels[i]
         href = prefix + name + '.html'
         if name == current_file:
             parts.append('<strong>' + label + '</strong>')
         else:
             parts.append('<a href="' + href + '">' + label + '</a>')
-    # Last: ↑ 站点, links to ../index.html (or index.html)
     home_label = labels[5]
     home_href = prefix + 'index.html'
     parts.append('<a href="' + home_href + '">' + home_label + '</a>')
     return ' · '.join(parts)
 
+
 def render_lang_switch(lang_code, current_file, is_top_level):
-    """Render the 4-language switch in the page's language. Active
-    lang as <strong>, others as <a href>."""
+    """Render the 4-language switch in the page's language."""
     prefix = '' if is_top_level else '../'
 
     def href_for(target_lang):
-        # English lives at top level; other langs in /<lang>/ subdir.
-        # From a top-level page, going to en: current_file.html,
-        # going to other: <lang>/<file>.html.
-        # From a per-language page: ../<file>.html for en (top level),
-        # ../<lang>/<file>.html for others.
         if target_lang == 'en':
             return prefix + current_file + '.html'
         return prefix + target_lang + '/' + current_file + '.html'
@@ -82,23 +100,24 @@ def render_lang_switch(lang_code, current_file, is_top_level):
                          + lang_target + '</a>')
     return ' · '.join(parts)
 
+
 def current_file_from_path(p):
-    """Infer current file stem from path. /foo.html → 'foo'."""
     name = p.name
     if name.endswith('.html'):
         return name[:-5]
     return name
 
+
 def is_top_level_path(p):
-    """True if the path lives directly under docs/ (i.e. no per-lang
-    subdirectory). False if it's under docs/<lang>/."""
     rel = p.relative_to(Path('docs'))
-    return len(rel.parts) == 1   # just the file, no subdir
+    return len(rel.parts) == 1
+
 
 def infer_lang(html):
     m = re.search(r'<html\s+lang="([^"]+)"', html)
     if not m: return 'en'
     return HTML_LANG_MAP.get(m.group(1), 'en')
+
 
 def refactor_file(path):
     html = path.read_text()
@@ -106,15 +125,23 @@ def refactor_file(path):
     current = current_file_from_path(path)
     top = is_top_level_path(path)
 
+    # Homepage header: lang-switch only (no section-nav — the
+    # homepage already exposes its primary destinations through
+    # the existing meta row in the hero and the bottom nav strip).
     if current == 'index':
-        new_header = '<header class="page-header">\n    <div class="lang-switch">' + render_lang_switch(lang, 'index', top) + '</div>\n</header>'
+        header_inner = '<div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>'
     else:
-        new_header = (
-            '<header class="page-header">\n'
-            '    <nav class="section-nav">' + render_section_nav(lang, current, top) + '</nav>\n'
-            '    <div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>\n'
-            '</header>'
+        nav_inner = render_section_nav(lang, current, top)
+        header_inner = (
+            '<nav class="section-nav">' + nav_inner + '</nav>\n'
+            '    <div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>'
         )
+
+    new_header = (
+        '<header class="page-header">\n'
+        '    ' + header_inner + '\n'
+        '</header>'
+    )
 
     new = re.sub(
         r'<header class="page-header">.*?</header>',

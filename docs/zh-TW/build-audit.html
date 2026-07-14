@@ -15,7 +15,7 @@
 <a href="#main" class="skip">跳至內容</a>
 
 <header class="page-header">
-    <nav class="section-nav"><a href="../algorithm.html">演算法</a> · <a href="../perf.html">效能</a> · <a href="../security.html">資安</a> · <a href="../faq.html">常見問題</a> · <strong>建置稽核</strong> · <a href="../index.html">↑ 站台</a></nav>
+    <nav class="section-nav"><a href="../algorithm.html">演算法</a> · <a href="../perf.html">效能</a> · <a href="../security.html">資安</a> · <a href="../faq.html">常見問題</a> · <strong>建置稽核</strong> · <a href="../index.html">↑ 首頁</a></nav>
     <div class="lang-switch"><a href="../build-audit.html">en</a> · <a href="../zh-CN/build-audit.html">zh-CN</a> · <strong>zh-TW</strong> · <a href="../ja/build-audit.html">ja</a></div>
 </header>
 
@@ -45,6 +45,15 @@
         必須在 <em>上游</em>。本頁逐一列出每個風險、當前的
         緩解（如果有的話）、以及一行修復方案。</p>
 </aside>
+
+    <aside class="tldr" id="usage">
+        <p><b>使用方法。</b>四組指令 &mdash; 壓縮、解壓、列表、輸出：</p>
+        <pre><code>  lha c archive.lzh file1 file2   # 壓縮
+      lha x archive.lzh               # 解壓
+      lha l archive.lzh               # 列表（ls）
+      lha p archive.lzh file          # 輸出至標準輸出（cat）</code></pre>
+        <p class="cpu-note">安裝：<code>x eget use lha</code> &middot; 靜態二進位檔，~150 KB，零相依</p>
+    </aside>
 
 <section id="toolchain">
     <h2>1. 建置工具鏈風險</h2>

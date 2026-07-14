@@ -15,7 +15,7 @@
 <a href="#main" class="skip">跳至内容</a>
 
 <header class="page-header">
-    <nav class="section-nav"><strong>算法</strong> · <a href="../perf.html">性能</a> · <a href="../security.html">安全</a> · <a href="../faq.html">常见问题</a> · <a href="../build-audit.html">构建审计</a> · <a href="../index.html">↑ 站点</a></nav>
+    <nav class="section-nav"><strong>算法</strong> · <a href="../perf.html">性能</a> · <a href="../security.html">安全</a> · <a href="../faq.html">常见问题</a> · <a href="../build-audit.html">构建审计</a> · <a href="../index.html">↑ 首页</a></nav>
     <div class="lang-switch"><a href="../algorithm.html">en</a> · <strong>zh-CN</strong> · <a href="../zh-TW/algorithm.html">zh-TW</a> · <a href="../ja/algorithm.html">ja</a></div>
 </header>
 
@@ -50,6 +50,15 @@
         代价是 ~5 % 压缩率。继续读，看世系、看基准、看这个格式
         在 2026 年仍然占据的位置。</p>
 </aside>
+
+    <aside class="tldr" id="usage">
+        <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
+        <pre><code>  lha c archive.lzh file1 file2   # 压缩
+      lha x archive.lzh               # 解压
+      lha l archive.lzh               # 列表（ls）
+      lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
+        <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
+    </aside>
 
 <section id="algorithm">
     <h2>1. 算法</h2>
