@@ -97,8 +97,11 @@ jobs:
         run: bash scripts/build.sh
 
       # ---- smoke (host-side; for musl runs INSIDE the same container as build) ----
+      # Skip on musl (smoke already ran inside the alpine docker; running it
+      # again on the Ubuntu runner would try to execute a musl-linked binary
+      # under glibc and fail) and on windows (no /tmp mapping for mkstemp).
       - name: Smoke test on host (gnu / macos)
-        if: matrix.os != 'windows'
+        if: matrix.os != 'windows' && matrix.libc != 'musl'
         run: bash scripts/smoke.sh
 
       # Windows smoke is skipped: lha's mkstemp uses the template compiled in
