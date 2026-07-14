@@ -1,70 +1,63 @@
 // docs/lang-router.js
 //
 // Phase 2 of the lang-router. Runs deferred at the end of <body>,
-// after DOMContentLoaded. Its only jobs:
+// after DOMContentLoaded.
 //
-//   1. For each <a> in .lang-switch: rewrite the href to an *absolute*
-//      /<repo>/<lang>/<file>?lang=<lang> URL, where <lang> is the
-//      language that switcher item targets. This is the bug fix: the
-//      previous version produced relative hrefs that resolved to the
-//      legacy top-level page, so clicking "en" on
-//      /lha/zh-CN/security.html stayed on /lha/zh-CN/security.html.
+// What it does:
+//   1. Reads the EXPLICIT ?lang=X from the URL. (No localStorage,
+//      no navigator.)
+//   2. For each <a> in .lang-switch: rewrite the href to an
+//      absolute /<repo>/<lang>/<file>?lang=<lang> URL, where <lang>
+//      is the language that switcher item targets. Clicking the
+//      switcher carries the new language in the URL, and phase 1
+//      honors it on the next page load.
+//   3. For each other internal <a>: append or update ?lang=<current>
+//      so subsequent intra-site navigation preserves the explicit
+//      choice.
+//   4. Mark the active language in the switcher with
+//      aria-current="true" — based on the URL's current /<lang>/
+//      directory (or 'en' for top-level pages).
 //
-//   2. For each other internal <a>: append or update ?lang=<current>
-//      so subsequent intra-site navigation preserves the language.
-//
-//   3. Mark the active language in the switcher with aria-current=true.
-//
-// Phase 1 (redirect before paint) lives in lang-router-early.js,
+// Phase 1 (redirect, no DOM access) lives in lang-router-early.js,
 // loaded as a non-defer <script> in <head>. This file only runs if
-// phase 1 decided *not* to redirect — i.e. we're already on the
-// correct per-language URL.
+// phase 1 decided not to redirect — i.e. we're already on the
+// correct per-language URL for the explicit ?lang=X.
 
 (function () {
     'use strict';
 
     var SUPPORTED = ['en', 'zh-CN', 'zh-TW', 'ja'];
-    var STORAGE_KEY = 'lha-lang';
-    var URL_PARAM = 'lang';
     var REPO = 'lha';
 
-    function getDesired() {
+    function explicitDesired() {
         try {
             var u = new URL(window.location.href);
-            var fromUrl = u.searchParams.get(URL_PARAM);
-            if (fromUrl && SUPPORTED.indexOf(fromUrl) !== -1) {
-                try { localStorage.setItem(STORAGE_KEY, fromUrl); } catch (e) {}
-                return fromUrl;
-            }
+            var v = u.searchParams.get('lang');
+            if (v && SUPPORTED.indexOf(v) !== -1) return v;
         } catch (e) {}
-        try {
-            var fromStorage = localStorage.getItem(STORAGE_KEY);
-            if (fromStorage && SUPPORTED.indexOf(fromStorage) !== -1) return fromStorage;
-        } catch (e) {}
-        var langs = (navigator.languages || [navigator.language || 'en']);
-        for (var i = 0; i < langs.length; i++) {
-            var l = String(langs[i] || '').toLowerCase();
-            if (l.indexOf('zh-tw') === 0 || l.indexOf('zh-hk') === 0) return 'zh-TW';
-            if (l.indexOf('zh') === 0) return 'zh-CN';
-            if (l.indexOf('ja') === 0) return 'ja';
-            if (l.indexOf('en') === 0) return 'en';
-        }
-        return 'en';
+        return null;
     }
 
-    // Current file name, e.g. "security.html" or "index.html".
+    function currentLangOf(pathname) {
+        var parts = pathname.split('/').filter(Boolean);
+        if (parts.length === 0) return 'en';
+        var i = (parts[0] === REPO) ? 1 : 0;
+        var lang = parts[i];
+        return (lang && SUPPORTED.indexOf(lang) !== -1) ? lang : 'en';
+    }
+
     function currentFile() {
-        var path = window.location.pathname;
-        var parts = path.split('/').filter(Boolean);
+        var parts = window.location.pathname.split('/').filter(Boolean);
         var drop = (parts[0] === REPO) ? 1 : 0;
         if (parts[drop] && SUPPORTED.indexOf(parts[drop]) !== -1) drop++;
         var rest = parts.slice(drop).join('/');
         return rest === '' ? 'index.html' : rest;
     }
 
-    // Read the language that a switcher item's href points at, if any.
-    // The href can be relative ("../security.html"), absolute
-    // ("/lha/en/security.html"), or already per-language ("zh-CN/...").
+    // Reads the language that a switcher item's href points at, if
+    // any. The href can be relative ("../security.html"), absolute
+    // ("/lha/en/security.html"), or already per-language
+    // ("zh-CN/...").
     function targetLangOf(href) {
         var segs = String(href || '').split('/').filter(Boolean);
         for (var i = 0; i < segs.length; i++) {
@@ -73,9 +66,6 @@
         return null;
     }
 
-    // Read the file that a switcher item's href points at, if any.
-    // We default to the current file when the switcher href doesn't
-    // hint at a different one.
     function targetFileOf(href, fallback) {
         var segs = String(href || '').split('/').filter(Boolean);
         for (var i = 0; i < segs.length; i++) {
@@ -88,12 +78,16 @@
     }
 
     // Build the absolute per-language URL for a switcher item.
-    // Guarantees: starts with "/", contains the language directory,
-    // ends with ?lang=<lang>. No relative path can survive this.
-    function absoluteLangHref(switcherItemHref, fallbackFile) {
-        var lang = targetLangOf(switcherItemHref) || 'en';
-        var file = targetFileOf(switcherItemHref, fallbackFile);
-        return '/' + REPO + '/' + lang + '/' + file + '?' + URL_PARAM + '=' + lang;
+    // For lang='en' (English lives at top level, no /en/ subdir):
+    //   /<repo>/<file>?lang=en
+    // For other langs:
+    //   /<repo>/<lang>/<file>?lang=<lang>
+    function absoluteLangHref(switcherHref, fallbackFile) {
+        var lang = targetLangOf(switcherHref);
+        if (!lang) lang = 'en';
+        var file = targetFileOf(switcherHref, fallbackFile);
+        if (lang === 'en') return '/' + REPO + '/' + file + '?lang=en';
+        return '/' + REPO + '/' + lang + '/' + file + '?lang=' + lang;
     }
 
     function isInternal(href) {
@@ -113,10 +107,10 @@
     // the query string.
     function withLang(href, lang) {
         if (/(\?|&)lang=[^&#]*/.test(href)) {
-            return href.replace(/([?&])lang=[^&#]*/, '$1' + URL_PARAM + '=' + lang);
+            return href.replace(/([?&])lang=[^&#]*/, '$1lang=' + lang);
         }
-        if (href.indexOf('?') === -1) return href + '?' + URL_PARAM + '=' + lang;
-        return href + '&' + URL_PARAM + '=' + lang;
+        if (href.indexOf('?') === -1) return href + '?lang=' + lang;
+        return href + '&lang=' + lang;
     }
 
     function rewriteLinks(lang) {
@@ -136,24 +130,32 @@
         }
     }
 
-    function markActive(lang) {
-        // Switcher items carry /<lang>/ as a path segment after this
-        // script runs, so detect the active item by inspecting the
-        // rewritten href rather than the textual label (which would
-        // miss localized labels like "中文" / "繁體").
+    // Mark the switcher item for the language the user is currently
+    // sitting on (read from URL pathname, NOT from a preference).
+    function markActive(currentLang) {
         var anchors = document.querySelectorAll('.lang-switch a[href]');
         for (var i = 0; i < anchors.length; i++) {
             var a = anchors[i];
             var href = a.getAttribute('href') || '';
             var segs = href.split('/').filter(Boolean);
-            var match = segs.indexOf(lang) !== -1;
+            var langInHref = null;
+            for (var j = 0; j < segs.length; j++) {
+                if (SUPPORTED.indexOf(segs[j]) !== -1) { langInHref = segs[j]; break; }
+            }
+            // Match either by absolute Lang-in-href or by ?lang=X param.
+            var queryLangMatch = (href.indexOf('?lang=' + currentLang) !== -1) ||
+                                 (href.indexOf('&lang=' + currentLang) !== -1);
+            var match = (langInHref === currentLang) ||
+                        (langInHref === null && currentLang === 'en' && queryLangMatch);
             if (match) a.setAttribute('aria-current', 'true');
             else a.removeAttribute('aria-current');
         }
     }
 
     function init() {
-        var lang = getDesired();
+        // Use the EXPLICIT ?lang=X for body-link preservation. Default
+        // to 'en' if none given so body links still carry a marker.
+        var lang = explicitDesired() || currentLangOf(window.location.pathname);
         rewriteLinks(lang);
         markActive(lang);
     }
