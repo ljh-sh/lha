@@ -48,10 +48,10 @@ CONFIGURE_ARGS="--disable-dependency-tracking --disable-silent-rules"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 TARGET_ARCH="${LHA_TARGET_ARCH:-$HOST_ARCH}"
 TRIPLET="${LHA_TRIPLET:-}"
-if [ -n "$LHA_TARGET_OS" ]; then
+if [ -n "${LHA_TARGET_OS:-}" ]; then
 	TRIPLET="${TRIPLET:-${LHA_TARGET_ARCH}-${LHA_TARGET_OS}}"
 fi
-if [ "$TARGET_ARCH" != "$HOST_ARCH" ] || [ -n "$LHA_TARGET_OS" ]; then
+if [ "$TARGET_ARCH" != "$HOST_ARCH" ] || [ -n "${LHA_TARGET_OS:-}" ]; then
 	[ -z "$TRIPLET" ] && TRIPLET="$TARGET_ARCH"
 	case "${LHA_OS_HINT:-}" in
 	darwin)
