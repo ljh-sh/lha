@@ -41,3 +41,11 @@ upstream/lha/tests/*.lzh.out/
 *~
 .idea/
 .vscode/
+
+# If a tool (CI / Docker / mktemp under no TMPDIR) leaks a temp dir into
+# the repo, ignore `var/` (mac convention) and any `T/` or `tmp.*/` that
+# lands at the root. Defense-in-depth; `trap rm -rf $TMP` in scripts
+# normally keeps these out.
+var/
+T/
+tmp.*/

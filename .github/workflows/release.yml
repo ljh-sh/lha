@@ -1,0 +1,195 @@
+name: release
+
+# Build lha as self-contained static binaries on native per-OS runners,
+# package each target, and publish a GitHub Release on tag.
+#
+# Modeled on ljh-sh/kenlm/.github/workflows/release.yml:
+#   - Linux uses musl-static (alpine docker). One target per arch.
+#   - macOS Apple Silicon only (mirrors kenlm rationale on x86_64-macos).
+#   - Windows uses MSYS2/mingw64 from windows-latest — no vcpkg needed
+#     because lha has no third-party deps (configure has no --with-foo).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- main release matrix (dispatch + tag only) ----
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-linux-musl,  runner: ubuntu-latest,    os: linux,   libc: musl, docker_arch: amd64 }
+          - { target: aarch64-linux-musl, runner: ubuntu-24.04-arm, os: linux,   libc: musl, docker_arch: arm64 }
+          - { target: aarch64-macos,      runner: macos-14,         os: macos                  }
+          - { target: x86_64-windows,     runner: windows-latest,   os: windows                }
+    continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- install deps ----
+      - name: Install deps (Linux gnu — for the cheap smoke workflow)
+        if: matrix.libc == 'musl'
+        # musl builds run inside Alpine Docker; ubuntu's autotools is unused
+        # but installed anyway to satisfy any stray action shell-outs.
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
+
+      - name: Install deps (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          brew update
+          brew install autoconf automake libtool
+
+      - name: Install deps (Windows MSYS2 + mingw64)
+        if: matrix.os == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git autoconf automake libtool
+            make mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
+            base-devel
+
+      # ---- build ----
+      # Musl: single Alpine `docker run` does build + smoke + verify,
+      # because the build deps (`make`) are needed for `make check` in
+      # smoke. Re-using one container avoids re-installing on a second run.
+      - name: Build + smoke on Alpine (musl)
+        if: matrix.libc == 'musl'
+        run: docker run --rm --platform linux/${{ matrix.docker_arch }} -v "$PWD":/w -w /w alpine:3.20 sh -c 'apk add --no-cache bash >/dev/null && bash /w/scripts/build-alpine.sh && bash /w/scripts/smoke.sh'
+
+      - name: Build (macOS — host)
+        if: matrix.os == 'macos'
+        run: bash scripts/build.sh
+
+      - name: Build (Windows — msys2 bash)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        run: bash scripts/build.sh
+
+      # ---- smoke (host-side; for musl runs INSIDE the same container as build) ----
+      - name: Smoke test on host (gnu / macos / windows)
+        if: matrix.libc != 'musl'
+        run: bash scripts/smoke.sh
+
+      # ---- package ----
+      - name: Package (Linux / macOS)
+        if: matrix.os != 'windows'
+        run: TARGET=${{ matrix.target }} bash scripts/package.sh
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
+
+      # ---- verify self-containedness ----
+      # Linux musl-static binaries show exactly ONE entry in `ldd`:
+      #   /lib/ld-musl-<arch>.so.1 (0x...)
+      # because musl's loader bootstraps itself. That's the universal-Linux
+      # pattern, NOT a sign of dyn-linking to glibc/etc. We assert only
+      # musl/loader entries appear (no glibc / libpthread / libstdc++ / etc).
+      - name: Verify self-contained (staged binary)
+        if: matrix.os != 'windows'
+        run: |
+          set -e
+          bin="dist/lha-${{ matrix.target }}/bin/lha"
+          case "${{ matrix.os }}" in
+            linux)
+              out="$(ldd "$bin" 2>&1 || true)"; echo "$out"
+              # Either fully static ("not a dynamic executable") OR musl-only.
+              if echo "$out" | grep -q "not a dynamic executable"; then
+                echo "OK: fully static (no interp)"
+              elif echo "$out" | grep -Eq 'ld-musl-[^ ]+\.so\.1' \
+                && [ "$(echo "$out" | grep -cv '=> /lib/ld-musl-')" = "0" ]; then
+                echo "OK: musl-self-loaded (universal Linux)"
+              else
+                echo "FAIL: $bin has non-musl deps"; exit 1
+              fi
+              ;;
+            macos)
+              otool -L "$bin"
+              otool -L "$bin" | grep -E '/(opt/homebrew|usr/local)/' \
+                && { echo "FAIL: $bin links Homebrew dylibs"; exit 1; } || true
+              ;;
+          esac
+
+      - name: Show file type & size
+        if: matrix.os != 'windows'
+        run: |
+          file dist/lha-${{ matrix.target }}/bin/lha
+          du -h dist/lha-${{ matrix.target }}.tar.gz
+
+      - name: Show file type & size (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          file dist/lha-${{ matrix.target }}/bin/lha.exe
+          Get-ChildItem dist/lha-${{ matrix.target }}.zip | Format-Table Name, Length
+
+      # ---- upload artifact ----
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lha-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---- cheap PR/push smoke: x86_64-linux-gnu host (no packaging) ----
+  smoke-linux:
+    if: >-
+      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+      || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool build-essential
+      - name: Build (host)
+        run: bash scripts/build.sh
+      - name: Smoke test
+        run: bash scripts/smoke.sh
+
+  # ---- publish on tag ----
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 \
+            | xargs -0 sha256sum | sed 's|^\([^ ]*\)  \./|\1  |' > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+            dist/SHA256SUMS
+          generate_release_notes: true
