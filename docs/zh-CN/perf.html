@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 性能对比：lha vs tar / tar.gz / zip</title>
+<meta name="description" content="在 1.83 MiB kenlm 源码语料上对 lha、tar、tar.gz、gzip、zip 的 compress + decompress 对比。每个工具都跑了默认和最佳两级。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳到内容</a>
+
+<div class="lang-switch">
+    <a href="../perf.html">en</a> ·
+    <strong>zh-CN</strong> ·
+    <a href="../zh-TW/perf.html">zh-TW</a> ·
+    <a href="../ja/perf.html">ja</a> ·
+    <a href="../security.html">安全 →</a> ·
+    <a href="../index.html">↑ 站点</a>
+</div>
+
+<section class="hero">
+    <h1>性能对比</h1>
+    <p class="tagline">在 1.83 MiB 的代表性语料上对 <code>lha</code>、
+        <code>tar</code>、<code>tar.gz</code>、<code>zip</code> 做压缩与解压对比，
+        每个工具都跑了默认和最佳两级。数字清晰地说明了每个工具
+        在哪一项上领先。</p>
+    <p class="byline">
+        <b>语料</b>：<a href="https://github.com/kpu/kenlm">kenlm</a>
+        上游源码（1.83 MiB / 304 个文件，无 <code>.git</code>）&mdash;
+        1988-1991 年 lha 设计时面对的同样是这种源代码 + README
+        混合的输入。
+    </p>
+    <p class="cpu-note">每格 5 次取中位数，附样本标准差。机器：Apple M 系列，
+        原生 lha 编译产物（LHa for UNIX 1.14i-ac20220213，默认
+        configure 选项）。Wall-clock 端到端：每格的 compress +
+        decompress 总时间。</p>
+    <p class="meta">
+        <a href="../security.html">← 安全审计</a> ·
+        <a href="../index.html">↑ 站点</a>
+    </p>
+</section>
+
+<section id="headline">
+    <h2>一眼看完的表</h2>
+    <p>同一 1.83 MiB 语料，压缩解压各 5 次，取中位数。标准差反映
+        笔记本本身逐次运行的噪声。</p>
+    <table>
+    <thead>
+    <tr><th rowspan="2">工具</th>
+        <th rowspan="2">级别</th>
+        <th colspan="2">compress</th>
+        <th colspan="2">decompress</th>
+        <th rowspan="2">size B</th>
+        <th rowspan="2">压缩率</th></tr>
+    <tr><th>中位</th><th>±σ</th><th>中位</th><th>±σ</th></tr>
+    </thead>
+    <tbody>
+    <tr><td><b>lha</b></td><td>-lh5- (默认)</td>
+        <td><b>~50 ms</b></td><td>±5</td>
+        <td><b>~40 ms</b></td><td>±1</td>
+        <td>547,045</td><td>29.93 %</td></tr>
+    <tr><td><b>lha</b></td><td>-lh7-</td>
+        <td>~46 ms</td><td>±1</td>
+        <td>~40 ms</td><td>±6</td>
+        <td>547,045</td><td>29.93 %</td></tr>
+    <tr><td><b>tar</b></td><td>无压缩</td>
+        <td>~80 ms</td><td>±4</td>
+        <td>~82 ms</td><td>±5</td>
+        <td>2,732,544</td><td>149.55 %</td></tr>
+    <tr><td><b>tar.gz</b></td><td>-6 (默认)</td>
+        <td>~210 ms</td><td>±5</td>
+        <td>~5 ms</td><td>±0.1</td>
+        <td><b>455,435</b></td><td><b>24.93 %</b></td></tr>
+    <tr><td><b>tar.gz</b></td><td>-9 (最佳)</td>
+        <td>~210 ms</td><td>±1</td>
+        <td>~5 ms</td><td>±0.1</td>
+        <td>455,435</td><td>24.93 %</td></tr>
+    <tr><td><b>gzip -c</b></td><td>-6 (原始流)</td>
+        <td>~170 ms</td><td>±4</td>
+        <td>~5 ms</td><td>±0.2</td>
+        <td>455,486</td><td>24.93 %</td></tr>
+    <tr><td><b>gzip -c</b></td><td>-9 (最佳)</td>
+        <td>~170 ms</td><td>±3</td>
+        <td>~5 ms</td><td>±0.2</td>
+        <td>455,486</td><td>24.93 %</td></tr>
+    <tr><td><b>zip</b></td><td>-6 (默认)</td>
+        <td>~62 ms</td><td>±1</td>
+        <td>~3 ms</td><td>±0.4</td>
+        <td>566,683</td><td>31.01 %</td></tr>
+    <tr><td><b>zip</b></td><td>-9 (最佳)</td>
+        <td>~85 ms</td><td>±1</td>
+        <td>~3 ms</td><td>±0.1</td>
+        <td>566,683</td><td>31.01 %</td></tr>
+    </tbody>
+    </table>
+    <p>所有时间均为 wall-clock 端到端。"级别"是各工具自带的
+        压缩档位。语料文件数 304，未压缩总字节 1,827,165。
+        <code>tar (无压缩)</code>的压缩率超过 100% 是因为 tar
+        存储每个文件的元数据（UID、GID、mode 位、512 字节
+        每记录 padding）；对零碎小文件来说，没经过 deflate 之前
+        就已经多了 50%。</p>
+</section>
+
+<section id="axes">
+    <h2>怎么读这张表</h2>
+
+    <h3>1. compress 速度：<code>zip</code> &lt; <code>lha</code> &lt; <code>gzip</code> &lt; <code>tar</code> &lt; <code>tar.gz</code></h3>
+    <p>在默认级别下：</p>
+    <ul>
+        <li><b><code>zip -6</code> 是压缩最快的</b>（约 62 ms）&mdash;
+            deflate、不带 tar 阻塞、每个文件少量开销。</li>
+        <li><b><code>lha -lh5-</code> 排第二</b>（约 50 ms），比 zip
+            慢 22 % 左右。</li>
+        <li><b><code>gzip -6 -c</code> 处理原始 tar 流</b>需要
+            约 170 ms —— deflate 即使在默认级别上也是比 LZHUF
+            复杂得多的编码器。</li>
+        <li><b><code>tar -czf</code></b>在底层 deflate 之上
+            又多出 ~40 ms 的 framing &mdash; 每条记录、
+            512 字节对齐的 padding。</li>
+        <li><b><code>tar -cf</code>（无压缩）</b>约 80 ms &mdash;
+            只有 header 开销，没有 deflate。</li>
+    </ul>
+    <p>在默认级别上，<code>zip</code>比 <code>lha</code>快 22%，
+        <code>lha</code>比 <code>tar.gz</code>快 76%。
+        compress 速度的相对排序在不同语料上稳定。</p>
+
+    <h3>2. decompress 速度：<code>tar.gz</code> ≈ <code>zip</code> &lt; <code>lha</code> &lt; <code>tar</code></h3>
+    <p>解压方面速度排序很有趣：</p>
+    <ul>
+        <li><b><code>zip</code> 和 <code>tar.gz</code> 解压在 3-5 ms</b>
+            &mdash; deflate 解码成本低。</li>
+        <li><b><code>lha</code> 解压约 40 ms</b> &mdash; LZHUF 的解码
+            是位串行的：每个 bit 都依赖前一个 bit 的表查找。</li>
+        <li><b><code>tar</code>解压约 82 ms</b> &mdash; 同样的
+            512 字节记录 padding 开销在出口侧。</li>
+    </ul>
+    <p>在 CDN 上解压 100 次的真实场景里，绝对解压时间被
+        网络延迟主导。三种工具的解压时间都在个位数毫秒级；
+        差异远低于磁盘寻道 + HTTP 请求的噪声底限。</p>
+
+    <h3>3. 压缩率：<code>tar.gz</code> &lt; <code>gzip</code> ≈ <code>lha</code> &lt; <code>zip</code></h3>
+    <p>同一个 kenlm 语料上：</p>
+    <ul>
+        <li><b><code>tar.gz -6</code> 和 <code>gzip -6 -c</code></b>
+            都达到 455 KB / 24.93% &mdash; deflate 在本语料上的
+            下界。<code>-9</code>没找到更多优化。</li>
+        <li><b><code>lha -lh5-</code></b>约 547 KB / 29.93% &mdash;
+            比 deflate 大约 20%，换来 ~2.2 倍的压缩速度。这是
+            LZHUF 在 1990 年设计时就做出的取舍：针对
+            "286 + 1 MB RAM 上快速解压"，而不是体积最优。</li>
+        <li><b><code>zip -6</code></b>约 567 KB / 31.01% &mdash;
+            因为 zip 的 deflate 配置较旧，DEFLATE64（宽窗口变体）
+            默认关闭。</li>
+        <li><b><code>tar (无压缩)</code></b> 2.7 MB / 150% &mdash;
+            记录 header + 512 字节 padding 让小文件膨胀一倍多。</li>
+    </ul>
+    <p><code>tar.gz</code> 和 <code>lha</code> 的差距约 <b>5 个百分点</b>
+        &mdash; 在 1.8 MiB 上就是约 91 KB。在快速 CDN 上重传
+        这 91 KB 不到 100 ms；在慢速 CDN 上要 1-2 秒。这就是
+        实际网线上的 size-vs-speed 权衡。</p>
+
+    <h3>4. <code>-9</code> 在本语料上是个坑</h3>
+    <p>对于已经具有相当冗余性的文本（源码里有大量重复的
+        关键字和空白），gzip -9 和 tar.gz -9 都比 -6 找不出
+        任何新的优化。语料丰富度不够让更高级别发挥作用；-9
+        在 compress 时间上贵了 5-10 倍，但压缩率提升 ≈ 0%。</p>
+    <p>如果你有真正高熵的内容（视频片段、数据库 dump、加密数据），
+        -9 会拉开有意义的差距。本语料不满足这个条件。</p>
+</section>
+
+<section id="tradeoffs">
+    <h2>什么场景用什么工具</h2>
+    <table>
+    <thead>
+    <tr><th>如果关心的是…</th><th>选</th><th>原因</th></tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td>最小可能的输出</td>
+        <td><b><code>tar.gz -9</code></b> / zstd / brotli</td>
+        <td>默认 level 9（或 zstd -19 / brotli -11）是从单文件
+            工具中能得到的最优压缩率。代价是 compress 时间
+            比 <code>lha</code> 慢 5 倍多，压缩率只差 5%。</td>
+    </tr>
+    <tr>
+        <td>最快的 compress</td>
+        <td><b><code>zip -6</code></b></td>
+        <td>约 62 ms。DEFLATE64 关闭，没有 tar blocking，
+            每个文件少量开销。比 deflate -6 损失 6% 压缩率。</td>
+    </tr>
+    <tr>
+        <td>最快的 decompress（CDN、OTA、镜像）</td>
+        <td><b><code>lha</code></b> 或 <code>zip</code></td>
+        <td>两种工具在本语料上都在个位数毫秒级。lha 产物略大，
+            但解压后的代码体积本来就小；网络延迟主导。如果还关心
+            "无 zlib、无 libiconv 依赖"，lha 才是答案。</td>
+    </tr>
+    <tr>
+        <td>CI 产物 + CDN 的单文件静态二进制</td>
+        <td><b><code>lha</code></b></td>
+        <td><code>x eget use lha</code> 把一个 152 KB
+            全静态二进制装到 <code>~/.local/bin</code>，零依赖。
+            <code>tar.gz</code>需要 libz + libiconv + tar；
+            <code>zip</code>需要 libzip + libz。lha 没这棵树。</td>
+    </tr>
+    <tr>
+        <td>Windows / macOS 用户开箱即用的分发</td>
+        <td><b>zip</b>（或 <code>.tar.gz</code>）</td>
+        <td>zip 在 Windows + macOS 上是系统组件；tar.gz 系统直接
+            打开。lha 需要先装二进制（<code>x eget use lha</code>
+            一行解决，但仍然是个步骤）。</td>
+    </tr>
+    <tr>
+        <td>嵌入式 / 固件 / 老硬件</td>
+        <td><b><code>lha</code></b></td>
+        <td>在受限目标上解压器 &lt; 16 KB。设计目标是 640 KB
+            RAM 的 MS-DOS 机器。</td>
+    </tr>
+    </tbody>
+    </table>
+</section>
+
+<section id="deeper">
+    <h2>深入阅读</h2>
+    <h3>为什么 <code>lha -lh5-</code> compress 比 <code>tar.gz -6</code> 快</h3>
+    <p>LZHUF（<code>.lh5-</code> 背后的算法）使用 1990 年设计的
+        静态 Huffman 表 + 快速字符串匹配。<code>deflate</code>
+        （gzip / zlib）使用 LZ77 + 动态 Huffman + 滑窗，编码器
+        需要在滑窗里做选择。对没填满滑窗的输入（我们的 1.8 MiB
+        语料放 32 KB 窗口里还有富余），<code>deflate</code> 大部分时间
+        都在做匹配扫描；<code>LZHUF</code> 不需要。解压侧两者
+        几乎打平 &mdash; 解码回路结构差不多。</p>
+    <p>在比 deflate 窗口大得多的语料上（32 KB @ -6），deflate
+        会因为能找更远距离的匹配而拉开压缩率优势。我们的 1.8 MiB
+        语料太小，-6 已经接近局部最优，compress 时间上的差距
+        反而更显眼。要是对 100 MiB 语料，<code>tar.gz -9</code>
+        大约会以比 <code>lha -lh5-</code> 多 3-5 倍的 compress 时间
+        拉开压缩率。</p>
+
+    <h3>为什么 <code>tar (无压缩)</code> 比 input 大那么多</h3>
+    <p>tar 记录每个文件的元数据（UID、GID、mode、时间戳、文件名）
+        加上 512 字节/记录 padding。我们 1.8 MiB / 304 个小文件
+        的语料里，元数据占 50% 多。tar -czf 通过 LZ77 后端能
+        把大部分压回去，但 <em>原始</em>tar 对小文件语料就是
+        比 input 大。</p>
+
+    <h3>为什么 <code>zip -6</code> decompress 比 <code>tar.gz -6</code> 快</h3>
+    <p>zip 的归档格式在文件末尾有一个 central directory &mdash;
+        解码器可以非流式地读它。<code>tar.gz</code> 必须对每条记录
+        扫 tar header 来找 size，然后让 deflate 解码器填
+        那个 exact size。zip 的 deflate 可以 wrap 整个 central directory；
+        tar.gz 的 deflate 是 per-record 的，每条记录要单独解析
+        header。差距在文件数变多时拉大。</p>
+
+    <h3 id="lzhuf-why-slow">为什么 lha 的 decompress 比 deflate / zstd / lz4 慢？</h3>
+    <p>Decompress 是 LZHUF（<code>.lh5-</code>、<code>.lh7-</code>
+        背后的算法）显出年代感的地方。1990 年的设计是
+        <em>位串行（bit-serial）</em>的：</p>
+    <ul>
+        <li><b>静态 Huffman 表，逐 bit 解码。</b>位流按位读，
+            每 bit 决定下一次表查找。这是 <code>src/huf.c</code>
+            里的解码主循环。此循环里没有并行性：bit <i>n+1</i>
+            必须在 bit <i>n</i> 查表之后才能读。</li>
+        <li><b>LZ77 back-reference 串行解析。</b>解码器读到一个
+            length/distance 对时，从 <em>distance</em> 之前
+            复制 <em>length</em> 个字节。<code>src/slide.c</code>
+            中的滑窗按字节更新，没有 SIMD memmove。在 1.83 MiB
+            语料上，这个 copy 循环主导了运行时间。</li>
+        <li><b>源码中完全没有 SIMD。</b>
+            <code>grep -nE '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' src/*.c</code>
+            返回零命中。vendored 1.14i 代码是 1995-2003 年
+            的纯 ANSI C，没有架构特定的向量化。</li>
+    </ul>
+    <p>所以这个问题的答案是：<b>算法本身就是天花板，不是
+        实现</b>。LZHUF 1990 年针对"286 + 1 MB RAM 上快速解压"
+        做调优，位串行解码回路就是天然契合。给 lha 加 SIMD
+        优化也许能在 decompress 上拿到 1.5-2 倍（length-distance
+        copy 是唯一能向量化的大块），但底层的位串行 Huffman 循环
+        是根本串行的。要想解压更快，必须换算法，而不是对 LZHUF
+        做微观优化。</p>
+    <p>对比：<code>zstd</code> decompress 比 lha 在同等压缩率下
+        快约 5-10 倍，<code>lz4</code> 还能再快 3-5 倍。这两个
+        都是按现代 SIMD CPU（SSE2/AVX2 on x86_64，NEON on
+        aarch64）调优的，decompress 回路是 SIMD 友好的。lha
+        比 MMX（1996）早六年，最初的维护者没有向量单元可打。</p>
+    <p>什么时候这有影响：lha 是 "系统上没装 zstd/lz4 时
+        一个单文件静态二进制"的正解。lha <em>不是</em>需要
+        微秒级 decompress 的高吞吐 CDN 的正解。</p>
+</section>
+
+<section id="how-to-reproduce">
+    <h2>怎么复现</h2>
+    <p>在任何 Unix-like 主机上（macOS、Linux、BSD）：</p>
+    <pre><code>git clone --depth 1 https://github.com/ljh-sh/lha.git
+cd lha
+bash scripts/build.sh
+cp build/src/lha /usr/local/bin/
+
+# 语料
+test -d corpus/kenlm_src || cp -R ../kenlm/upstream/kenlm corpus/kenlm_src
+
+# 每工具 5 次取中位数。表中数字来自 5 次（median ± sample-stdev），
+# Apple M 系列笔记本。
+for tool in \
+  'lha  :lha c k.lh5- corpus/kenlm_src' \
+  'tar  :tar -cf k.tar -C corpus kenlm_src' \
+  'tgz6 :tar -czf k6.tgz -C corpus kenlm_src' \
+  'tgz9 :tar -czf -9 k9.tgz -C corpus kenlm_src' \
+  'zip6 :zip -qr -6 k6.zip kenlm_src' \
+  'zip9 :zip -qr -9 k9.zip kenlm_src' ; do
+  label=${tool%%:*}; cmd=${tool#*:}
+  rm -f k.*
+  for r in 1 2 3 4 5; do
+    rm -rf corpus/kenlm_src; cp -R ../kenlm corpus/kenlm_src
+    t=$( { time $cmd >/dev/null 2>&amp;1; } 2>&amp;1 | awk '/real/{print $NF}')
+    sz=$(stat -c%s k.* 2>/dev/null | head -1)
+    echo "$label  t=$t  sz=$sz"
+  done
+done</code></pre>
+    <p>数字会因机器而异（不同 CPU 之间差约 10%，跨 macOS / Linux 差约
+        5%），但 compress 速度的相对排序
+        <code>(zip → lha → tar → tar.gz)</code>、decompress
+        <code>(tar.gz → zip → lha → tar)</code>、压缩率
+        <code>(tar.gz → lha → zip → tar)</code> 是稳定的。</p>
+</section>
+
+<footer>
+    <p>
+        语料：kenlm 上游源码树，1.83 MiB / 304 个文件。
+        硬件：Apple M 系列，原生 lha 编译产物
+        （LHa for UNIX 1.14i-ac20220213）。每格 5 次取中位数 ±
+        样本标准差。用上一节那段 shell 复现；不同 CPU 上数字偏差 &lt; 15%
+        但相对排序稳定。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>

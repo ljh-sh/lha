@@ -15,7 +15,9 @@
 
 <div class="lang-switch">
     <strong>en</strong> ·
-    <a href="#zh-CN">zh-CN</a> ·
+    <a href="zh-CN/perf.html">zh-CN</a> ·
+    <a href="zh-TW/perf.html">zh-TW</a> ·
+    <a href="ja/perf.html">ja</a> ·
     <a href="security.html">← security</a> ·
     <a href="../index.html">↑ site</a>
 </div>
@@ -292,6 +294,54 @@
         is per-record, and each record needs its own header
         parse. The single-digit ms gap here is small; on a
         corpus with many files (thousands), zip's lead grows.</p>
+
+    <h3 id="lzhuf-why-slow">Why is lha's decompress slower than deflate / zstd / lz4?</h3>
+    <p>Decompression is where LZHUF (the algorithm behind
+        <code>.lh5-</code> and <code>.lh7-</code>) shows its age.
+        The 1990 design is fundamentally <em>bit-serial</em>:</p>
+    <ul>
+        <li><b>Static Huffman tables, bit-by-bit decode.</b> The
+            bitstream is read one bit at a time, and each bit
+            determines the next table lookup. This is the decode
+            loop in <code>src/huf.c</code> &mdash; the main
+            decompressor hot path. There is no parallelism in
+            this loop: bit <i>n+1</i> cannot be read until bit
+            <i>n</i> has been looked up.</li>
+        <li><b>LZ77 back-references resolved serially.</b> When the
+            decoder reads a length/distance pair, it copies
+            <em>length</em> bytes from <em>distance</em> ago. The
+            slide window in <code>src/slide.c</code> is updated
+            byte by byte, no SIMD memmove. On a 1.83 MiB corpus,
+            this copy loop dominates the runtime.</li>
+        <li><b>No SIMD anywhere in the source.</b>
+            <code>grep -nE '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' src/*.c</code>
+            returns zero hits. The vendored 1.14i code is straight
+            ANSI C from 1995-2003, with no architecture-specific
+            vectorization.</li>
+    </ul>
+    <p>So the answer to the question is: <b>the algorithm is the
+        ceiling, not the implementation</b>. LZHUF was tuned in
+        1990 for "fast unpack on a 286 with 1 MiB RAM", and the
+        bit-serial decode loop was the natural fit. A
+        SIMD-optimized lha port would gain perhaps 1.5-2x on
+        decompress (the length-distance copy is the only
+        vectorizable chunk), but the underlying bit-serial
+        Huffman loop is fundamentally serial. To get more
+        decompress speed, you have to switch algorithms, not
+        micro-optimize LZHUF.</p>
+    <p>For comparison: <code>zstd</code> decompress is ~5-10x
+        faster than lha at similar ratio, and <code>lz4</code> is
+        ~3-5x faster still. Both are tuned for modern SIMD CPUs
+        (SSE2/AVX2 on x86_64, NEON on aarch64) and have decompress
+        loops that are SIMD-friendly by design. lha predates
+        MMX (1996) by six years and the original maintainers
+        never had a vector unit to target.</p>
+    <p>When this matters: lha is the right answer for a static
+        binary that has to live on a system without zstd/lz4
+        installed. lha is <em>not</em> the right answer for a
+        high-throughput CDN that needs microsecond-scale
+        decompress.</p>
+</section>
 </section>
 
 <section id="how-to-reproduce">

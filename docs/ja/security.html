@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — ソースコード・セキュリティ監査</title>
+<meta name="description" content="vendored lha ソースの多角的セキュリティ監査：危険な関数の grep、ライブラリ依存、ランタイム権限、テンポラリファイル安全性。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">本文へスキップ</a>
+
+<div class="lang-switch">
+    <a href="../security.html">en</a> ·
+    <a href="../zh-CN/security.html">zh-CN</a> ·
+    <a href="../zh-TW/security.html">zh-TW</a> ·
+    <strong>ja</strong> ·
+    <a href="../perf.html">性能 →</a> ·
+    <a href="../index.html">↑ サイト</a>
+</div>
+
+<section class="hero">
+    <h1>ソースコード・セキュリティ監査</h1>
+    <p class="tagline">vendored <code>lha</code> ソースの多角的監査：
+        危険な関数の grep、ライブラリ依存面、ランタイム権限、
+        テンポラリファイル安全性、メンテナの帰属チェーン。</p>
+    <p class="byline">
+        <b>ソース</b>：<code>upstream/lha/</code> の vendored コミット
+        <code>jca02266/lha@86094cb</code>
+        （<b>LHa for UNIX 1.14i-ac20220213</b>）。
+        <b>規模</b>：約 13,400 行 C、32 <code>.c</code> + 5 ヘッダ；
+        約 340 KB。
+    </p>
+    <p class="cpu-note">純粋な静的解析 &mdash; 実行なし、ネットワークなし、
+        ファジングなし。各 grep はリポジトリのルートから
+        そのままコピー＆ペーストで再現可能。</p>
+    <p class="meta">
+        <a href="../perf.html">→ 性能比較</a> ·
+        <a href="../index.html">↑ サイト</a>
+    </p>
+</section>
+
+<section id="axes">
+    <h2>五つの監査軸</h2>
+    <p>ソースは自己完結した C プログラム。
+        <code>libiconv</code>（デフォルト off、musl-static は
+        組み込み版を使用）以外に configure 時のオプション依存は
+        ない。五つの独立した軸で監査：</p>
+
+    ::::ol
+    :::li <b>ネットワーク面。</b>ランタイムで socket を開いたり、
+        DNS を引いたり、HTTP/SFTP を話したりするか？
+    :::
+
+    :::li <b>サブプロセス面。</b><code>fork</code> / <code>exec</code> /
+        <code>system</code> / <code>popen</code> で他のバイナリを
+        起動するか？
+    :::
+
+    :::li><b>権限昇格。</b><code>setuid</code>、<code>setgid</code>、
+        <code>chroot</code>、<code>mount</code> を呼ぶか？
+    :::
+
+    :::li><b>メモリ安全でないプリミティブ。</b>CWE フラグ付き関数
+        （<code>strcpy</code>、<code>sprintf</code>、<code>gets</code>、
+        <code>scanf</code>）のうちどれが使われているか？
+        使われている場合、長さチェックされているか？
+    :::
+
+    :::li><b>テンポラリファイル競合。</b>伸長時に原子的
+        <code>mkstemp(3)</code> を使うか、競合可能な
+        <code>mktemp(3)</code> か？
+    :::
+    ::::
+
+    <p>各軸が一つの <code>grep -nE</code> に対応する。結果は
+        次節。</p>
+</section>
+
+<section id="results">
+    <h2>監査結果</h2>
+
+    ::::ol
+    :::li><b>ネットワーク呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+        <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
+        ゼロ一致。lha は socket を開かず、DNS を引かず、HTTP を
+        話さず、URL 処理ライブラリを呼びません。リンカシンボル
+        テーブルにもネットワーク系ライブラリは存在しない；
+        ランタイムは完全オフライン。
+    :::
+
+    :::li><b>サブプロセス呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+        <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
+        ゼロ一致。lha は shell out しない。外部圧縮ツールは
+        使わない（自前実装）、<code>xz</code> への pipe もしない、
+        外部の署名・検証ツールも呼び出さない。<code>stdio.h</code>
+        への呼び出しはアーカイブファイル自体の読み書きのみ。
+    :::
+
+    :::li><b>権限昇格：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+        <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
+        ゼロ一致。lha は呼び出し元の <code>umask</code>（
+        <code>extract.c</code> 内の <code>umask(022)</code>）で
+        展開し、権限を昇格しない。シンボリックリンクの展開は
+        ロックダウンされている：<code>lhext.c</code> はシンボリック
+        リンクが展開先のパスを越えて辿ることを阻止し、展開先
+        外を指すアーカイブのシンボリックリンクを拒否する。これは
+        まさに CVE-2022-1027 系のような旧 archiver が持っていた
+        脆弱性クラス &mdash; lha は該当しない。
+    :::
+
+    :::li><b>メモリ安全でないプリミティブ：<span style="color:#1a7f37; font-weight:600">strcpy 8 箇所、すべて境界チェック済み；sprintf/gets/scanf ゼロ</span>。</b>
+        <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
+        <p>8 箇所の <code>strcpy</code> 呼び出し点。
+            <code>sprintf</code> / <code>gets</code> / <code>scanf</code> はゼロ。
+            8 箇所の内訳：</p>
+        <ul>
+            <li><b>8 箇所のうち 7 箇所</b>は直前で長さチェック。
+                それぞれソース中に <code>/* ok */</code> 注釈あり
+                &mdash; 上流メンテナのレビューマーカー。</li>
+            <li>残り 1 箇所 &mdash; <code>strcpy(p, buf)</code> in
+                <code>util.c:126</code> &mdash; は <code>strdup</code>
+                パターン：<code>p</code> は <code>strlen(buf)+1</code>
+                バイトで <code>malloc</code> 直後、つまりちょうどもう
+                1 バイト余裕がある。バッファオーバーランなし。</li>
+        </ul>
+        <p>現代の lha 代替（lz4、zstd、7z）は同様に大きなプリミティブ
+            面を持つが、現在の sanitizer ファジング調整済み。lha は
+            古い分、危険呼び出し点の数が少なく、個別にチェック済み。</p>
+    :::
+
+    :::li><b>テンポラリファイル：<span style="color:#1a7f37; font-weight:600">mkstemp(3)、mktemp(3) ではない</span>。</b>
+        <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
+        <p><code>lharc.c:1240</code>：</p>
+        <pre><code>old_umask = umask(077);
+fd = mkstemp(temporary_name);
+umask(old_umask);</code></pre>
+        <p><code>mkstemp(3)</code> は POSIX 原子的、デフォルト権限 0700 &mdash;
+            攻撃者がパスを差し替える競合窓がない。
+            <code>mktemp(3)</code> は deprecated / 危険な版。lha は
+            使わない。</p>
+    :::
+    ::::
+</section>
+
+<section id="runtime">
+    <h2>ランタイムで実際にリンクされるもの</h2>
+    <p>静的バイナリ配布版がリンクするのは：</p>
+    <ul>
+        <li>libc（macOS では libSystem）&mdash; 常に</li>
+        <li>libz &mdash; システム zlib 使用時のみ。vendored ソースは
+            zlib-compat シム同梱なのでデフォルトビルドでは不要</li>
+        <li>libiconv &mdash; <code>--enable-iconv</code> 有効時のみ
+            （デフォルト off；musl-static は musl 同梱版を使用）</li>
+    </ul>
+    <p><code>libcurl</code> / <code>libssl</code> / <code>libxml2</code> /
+        <code>libsystemd</code> なし。musl-static ビルドでは上記
+        すべて単一バイナリに同梱 &mdash; これが
+        <code>x eget use lha</code> のインストール結果。</p>
+</section>
+
+<section id="attribution">
+    <h2>メンテナ帰属チェーン</h2>
+    <p>五軸の grep はソースが<em>何をするか</em>を示すだけ。バイナリが
+        実際に<em>何であるか</em>を確認するには、ソース帰属を
+        30 年・7 メンテナ遡る必要がある &mdash; いずれも公開
+        LZH/LHA ナレッジグラフ上：</p>
+    <ul>
+        <li><b>Y. Tagawa</b> &mdash; LHarc/LHA 作者、1988-1989</li>
+        <li><b>M. Oki</b> &mdash; LHA for UNIX 移植、1991</li>
+        <li><b>N. Watazaki</b> &mdash; LHa for UNIX 大幅書き直し、1993-1995</li>
+        <li><b>T. Okamoto</b> &mdash; LHA 1.14i パッチ、2000</li>
+        <li><b>Koji Arai</b> &mdash; autoconf 化、2003-2022</li>
+        <li><b>jca02266（GitHub）</b> &mdash; 現在の保守 autoconf
+            フォーク、2022-</li>
+        <li><b>ljh-sh</b> &mdash; 静的バイナリラッパー、2026</li>
+    </ul>
+    <p>各貢献者の変更はヘッダに帰属として残され、<code>upstream/lha/</code>
+        内の tar は <code>jca02266/lha</code> の
+        <code>86094cb</code> とビット単位一致。当リポジトリは
+        lha 本体を保守せず、静的バイナリのみをビルドする。</p>
+</section>
+
+<section id="verdict">
+    <h2>結論</h2>
+    <p><code>lha</code> バイナリは配布・実行ともに安全。攻撃面は：</p>
+    <blockquote>
+        <em>「ユーザー指定のバイナリファイルを読み込み、ヘッダを
+            パースし、内部のパスとバイトを書き出す」</em>
+    </blockquote>
+    <p>ネットワークなし、サブプロセスなし、権限境界の横断なし、
+        メモリ安全でないプリミティブは個々に境界チェック済み。
+        テンポラリファイルパスは <code>mkstemp(3)</code> で原子的。
+        上流帰属チェーンは 30 年・7 メンテナ、すべて公開
+        LHA ナレッジグラフ上、隠れた書き換え者なし。</p>
+</section>
+
+<footer>
+    <p>
+        監査 &mdash; すべての grep は標準的な Linux 開発機で
+        新規 clone からそのままコピー＆ペースト可能。事実の源：
+        <code>upstream/lha/</code> vendored コミット
+        <code>jca02266/lha@86094cb</code>。ソース中の非ゼロ・未レビュー
+        一致はリグレッション扱い。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>

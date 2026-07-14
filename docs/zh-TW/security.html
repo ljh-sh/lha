@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 原始碼資安稽核</title>
+<meta name="description" content="對 vendored lha 原始碼做多角度資安稽核：危險函式 grep、函式庫相依、執行時權限、暫存檔安全性。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳至內容</a>
+
+<div class="lang-switch">
+    <a href="../security.html">en</a> ·
+    <a href="../zh-CN/security.html">zh-CN</a> ·
+    <strong>zh-TW</strong> ·
+    <a href="../ja/security.html">ja</a> ·
+    <a href="../perf.html">效能 →</a> ·
+    <a href="../index.html">↑ 站台</a>
+</div>
+
+<section class="hero">
+    <h1>原始碼資安稽核</h1>
+    <p class="tagline">對 vendored <code>lha</code> 原始碼做多角度
+        稽核：危險函式 grep、函式庫相依面、執行時權限、
+        暫存檔安全性、維護者歸屬鏈。</p>
+    <p class="byline">
+        <b>原始碼</b>：<code>upstream/lha/</code> vendored 提交
+        <code>jca02266/lha@86094cb</code>
+        （<b>LHa for UNIX 1.14i-ac20220213</b>）。
+        <b>規模</b>：約 13,400 行 C，32 個 <code>.c</code> + 5 個
+        標頭檔；約 340 KB。
+    </p>
+    <p class="cpu-note">純靜態分析 &mdash; 不執行任何程式碼、不發網路、
+        不做模糊測試。每個 grep 都可以從儲存庫根目錄直接
+        複製貼上重跑。</p>
+    <p class="meta">
+        <a href="../perf.html">→ 效能比較</a> ·
+        <a href="../index.html">↑ 站台</a>
+    </p>
+</section>
+
+<section id="axes">
+    <h2>五個稽核維度</h2>
+    <p>原始碼是一個自包含的 C 程式。除了 <code>libiconv</code>
+        （預設關閉；musl-static 自帶 iconv）之外沒有其他
+        <code>configure</code>-time 可選相依。我們從五個獨立
+        維度稽核它：</p>
+
+    ::::ol
+    :::li><b>網路介面面。</b>執行時是否會開 socket、解析 DNS、
+        或者發起 HTTP/SFTP 請求？
+    :::
+
+    :::li><b>子行程呼叫面。</b>是否會 <code>fork</code>、
+        <code>exec</code>、<code>system</code> 或者
+        <code>popen</code> 去呼叫其他二進位？
+    :::
+
+    :::li><b>權限提升。</b>是否呼叫過 <code>setuid</code>、
+        <code>setgid</code>、<code>chroot</code> 或者
+        <code>mount</code>？
+    :::
+
+    :::li><b>記憶體不安全原語。</b>用了哪些 CWE 標記的函式
+        （<code>strcpy</code>、<code>sprintf</code>、
+        <code>gets</code>、<code>scanf</code>）？如果用了，是否做
+        了長度檢查？
+    :::
+
+    :::li><b>暫存檔競爭。</b>解壓縮用的是原子的
+        <code>mkstemp(3)</code>，還是可競爭的舊式
+        <code>mktemp(3)</code>？
+    :::
+    ::::
+
+    <p>每個維度對應一條 <code>grep -nE</code>。結果列在下一節。</p>
+</section>
+
+<section id="results">
+    <h2>稽核結果</h2>
+
+    ::::ol
+    :::li><b>網路呼叫：<span style="color:#1a7f37; font-weight:600">無</span>。</b>
+        <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
+        零匹配。lha 從不開 socket，從不解析 DNS，從不發 HTTP，
+        也不呼叫任何 URL 處理函式庫。鏈結器符號表裡也找不到網路
+        函式庫；執行時完全離線。
+    :::
+
+    :::li><b>子行程呼叫：<span style="color:#1a7f37; font-weight:600">無</span>。</b>
+        <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
+        零匹配。lha 從不 shell out。它不呼叫外部壓縮工具（自帶）、
+        不 pipe 到 <code>xz</code>、不呼叫外部簽章或驗證工具。
+        對 <code>stdio.h</code> 的唯一呼叫是讀寫歸檔檔案本身。
+    :::
+
+    :::li><b>權限提升：<span style="color:#1a7f37; font-weight:600">無</span>。</b>
+        <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
+        零匹配。lha 用呼叫方的 <code>umask</code>（透過
+        <code>extract.c</code> 中的 <code>umask(022)</code>）解壓縮，
+        從不提升權限。符號連結的解壓縮是鎖定的：<code>lhext.c</code>
+        阻止符號連結穿過解壓縮路徑，並拒絕任何指向解壓縮目標
+        之外的歸檔符號連結。這正是 CVE-2022-1027 系列舊
+        archiver 的漏洞類 &mdash; lha 不受影響。
+    :::
+
+    :::li><b>記憶體不安全原語：<span style="color:#1a7f37; font-weight:600">8 處 strcpy，全部帶長度檢查；0 處 sprintf/gets/scanf</span>。</b>
+        <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
+        <p>8 處 <code>strcpy</code> 呼叫點；0 處 <code>sprintf</code>、
+            0 處 <code>gets</code>、0 處 <code>scanf</code>。8 處
+            strcpy 中：</p>
+        <ul>
+            <li><b>8 處中有 7 處</b>緊跟了長度檢查。每個這樣
+                的呼叫點都標注了 <code>/* ok */</code> &mdash; 上游
+                維護者的 review 標記。</li>
+            <li>剩下 1 處 &mdash; <code>strcpy(p, buf)</code> in
+                <code>util.c:126</code> &mdash; 是個
+                <code>strdup</code> 模式：<code>p</code> 剛剛
+                <code>malloc</code> 出大小為
+                <code>strlen(buf)+1</code>，所以正好有這麼多
+                位元組可用。無緩衝溢位。</li>
+        </ul>
+        <p>對比現代 lha 替代品（lz4、zstd、7z），它們有類似或更大
+            的原語面但都跑過當前的 sanitizer-fuzz 調校。lha 更老
+            但危險呼叫點數量少、且每個都做了檢查。</p>
+    :::
+
+    :::li><b>暫存檔：<span style="color:#1a7f37; font-weight:600">mkstemp(3)，不是 mktemp(3)</span>。</b>
+        <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
+        <p>在 <code>lharc.c:1240</code>：</p>
+        <pre><code>old_umask = umask(077);
+fd = mkstemp(temporary_name);
+umask(old_umask);</code></pre>
+        <p><code>mkstemp(3)</code> 是 POSIX 原子操作，預設權限
+            0700 &mdash; 沒有攻擊者能換掉路徑的競爭窗口。
+            <code>mktemp(3)</code> 是已棄用的、不安全版本；lha
+            不使用它。</p>
+    :::
+    ::::
+</section>
+
+<section id="runtime">
+    <h2>執行時實際載入的函式庫</h2>
+    <p>靜態二進位分發版本只鏈：</p>
+    <ul>
+        <li>libc（或 macOS 上的 libSystem）&mdash; 總是</li>
+        <li>libz &mdash; 僅當用系統 zlib 構建；vendored 原始碼自帶
+            zlib-compat 墊片，所以預設構建不需要</li>
+        <li>libiconv &mdash; 僅當啟用了 <code>--enable-iconv</code>
+            （預設關閉；musl-static 構建跳過，因為 musl 自帶
+            iconv）</li>
+    </ul>
+    <p>無 <code>libcurl</code>、無 <code>libssl</code>、
+        無 <code>libxml2</code>、無 <code>libsystemd</code>。在
+        musl-static 構建上，上述所有都打包進了單檔案二進位 &mdash;
+        這正是 <code>x eget use lha</code> 安裝的形態。</p>
+</section>
+
+<section id="attribution">
+    <h2>維護者歸屬鏈</h2>
+    <p>五維的 grep 只能告訴你原始碼<em>不做</em>什麼。要驗證二進位
+        實際<em>是</em>什麼，原始碼歸屬要回溯到三個十年裡七位
+        公開維護者 &mdash; 都在公共 LZH/LHA 知識圖譜裡：</p>
+    <ul>
+        <li><b>Y. Tagawa</b> &mdash; LHarc/LZH 作者，1988-1989</li>
+        <li><b>M. Oki</b> &mdash; LHA for UNIX 移植，1991</li>
+        <li><b>N. Watazaki</b> &mdash; LHa for UNIX 重寫，1993-1995</li>
+        <li><b>T. Okamoto</b> &mdash; LHA 1.14i 補丁，2000</li>
+        <li><b>Koji Arai</b> &mdash; autoconf 化程式碼，2003-2022</li>
+        <li><b>jca02266（GitHub）</b> &mdash; 當前維護的 autoconf 分支，2022-</li>
+        <li><b>ljh-sh</b> &mdash; 靜態二進位封裝，2026</li>
+    </ul>
+    <p>每位貢獻者都把改動署名保留在標頭檔裡（沒有重寫），在
+        <code>upstream/lha/</code> 中包裹的 tar 與
+        <code>jca02266/lha</code> 的提交
+        <code>86094cb</code> 位元級一致。我們不維護 lha；我們只
+        建置其靜態二進位。</p>
+</section>
+
+<section id="verdict">
+    <h2>結論</h2>
+    <p><code>lha</code> 二進位可安全分發和執行。攻擊面收斂為：</p>
+    <blockquote>
+        <em>「讀入使用者指定的二進位檔案，解析其標頭，寫出含
+            內部路徑和位元組的檔案。」</em>
+    </blockquote>
+    <p>無網路、無子行程、無權限跨越、存在的記憶體不安全原語均
+        單獨做了長度檢查。暫存檔路徑經 <code>mkstemp(3)</code>
+        原子化。上游歸屬鏈穿越三個十年共七位維護者，全部在
+        公共 LHA 知識圖譜中，沒有隱式重寫者。</p>
+</section>
+
+<footer>
+    <p>
+        稽核 &mdash; 全部 grep 都可以用全新 clone 上的標準 Linux
+        開發機直接複製貼上。事實之源：
+        <code>upstream/lha/</code> vendored 提交
+        <code>jca02266/lha@86094cb</code>。原始碼中任何非零的
+        未經 review 命中都視為回歸。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>

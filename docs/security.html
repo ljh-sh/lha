@@ -15,7 +15,9 @@
 
 <div class="lang-switch">
     <strong>en</strong> ·
-    <a href="#zh-CN">zh-CN</a> ·
+    <a href="zh-CN/security.html">zh-CN</a> ·
+    <a href="zh-TW/security.html">zh-TW</a> ·
+    <a href="ja/security.html">ja</a> ·
     <a href="perf.html">perf →</a> ·
     <a href="../index.html">↑ site</a>
 </div>
@@ -210,49 +212,6 @@ umask(old_umask);</code></pre>
         <code>mkstemp(3)</code>. The upstream attribution chain runs
         through seven maintainers across three decades, all in the
         public LHA knowledge graph, with no hidden rewriters.</p>
-</section>
-
-<section id="zh-CN">
-    <h2>zh-CN 概述</h2>
-
-    <h3>五个审查维度</h3>
-    <p>对 vendored <code>lha</code> 源码（13,400 行 C）做的五维
-        静态分析全部通过：</p>
-    <ul>
-        <li><b>网络接口</b>：无 socket / connect / DNS / HTTP 调用。</li>
-        <li><b>子进程调用</b>：无 fork / exec / system / popen。</li>
-        <li><b>权限提升</b>：无 setuid / chroot / mount 调用。</li>
-        <li><b>内存不安全原语</b>：8 处 strcpy，全部在源码中含
-            "<code>/* ok */</code>" 标注的界内拷贝；零
-            sprintf / gets / scanf。</li>
-        <li><b>临时文件</b>：使用 mkstemp(3) 配合 umask(077)，没有用
-            可竞争的 mktemp(3)。</li>
-    </ul>
-    <p>
-        攻击面收敛为「读入用户指定的二进制文件 → 写出含其内部路径
-        与字节的文件」。可安全分发。
-    </p>
-
-    <h3>作者链（透明）</h3>
-    <p>七个维护者跨三十年：Y. Tagawa → M. Oki → N. Watazaki →
-        T. Okamoto → Koji Arai → jca02266 → ljh-sh。<code>upstream/lha/</code>
-        中的源码与 <code>jca02266/lha@86094cb</code> bit-for-bit 一致。
-        本仓库不修改 lha 本身，只构建其静态二进制。</p>
-
-    <h3>运行期库依赖</h3>
-    <p>
-        静态二进制分发仅依赖 libc (或 macOS 的 libSystem)。
-        默认不链 libz（自带 zlib-compat shim）。
-        默认不链 libiconv（musl 自带）。无 libcurl / libssl /
-        libxml2 / libsystemd。
-    </p>
-
-    <h3>实际含义</h3>
-    <p>
-        lha 在分发与运行上是安全的。可以放心通过
-        <code>x i lha</code> 与 <code>x eget use lha</code>
-        安装到任何环境。
-    </p>
 </section>
 
 <footer>
