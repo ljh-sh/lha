@@ -41,8 +41,37 @@
         &middot; <a href="https://github.com/jca02266/lha">upstream</a>
         &middot; <a href="security.html">Security audit</a>
         &middot; <a href="perf.html">Efficiency bench</a>
+        &middot; <a href="faq.html">FAQ</a>
+        &middot; <a href="build-audit.html">Build audit</a>
     </p>
 </section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR.</b> <code>lha</code> is a 35-year-old file archiver
+        (the format behind <code>.lzh</code> archives, dominant on
+        Japanese PCs and MS-DOS through the 1990s) distributed here
+        as a single self-contained static binary &mdash; ~150 KB, zero
+        external dependencies, every Linux distro / macOS / Windows.
+        The vendored source is <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        at commit <code>86094cb</code> (LHa for UNIX 1.14i-ac20220213);
+        this repo only builds static binaries of it. <b>Who should
+        care</b>: anyone unpacking a 30-year-old <code>.lzh</code> on
+        a system without a 1990s-era archiver, CI artifact publishers
+        who want a single 150-KB binary that doesn't drag libz /
+        libiconv / libcurl into the build, and the ljh-sh static-binary
+        distribution convention generally. <b>What this site is</b>:
+        a <a href="security.html">5-axis source audit</a> of the
+        vendored C, a <a href="perf.html">compress + decompress
+        benchmark</a> against <code>tar</code> / <code>tar.gz</code>
+        / <code>zip</code>, a <a href="build-audit.html">build-tool
+        risk review</a>, and a <a href="faq.html">FAQ</a> that captures
+        every "why" question we've worked through. <b>What this site
+        is not</b>: an lha-rs project, a tANS rewrite, a new
+        <code>.lh8-</code> format, or anything that would touch the
+        vendored source. The vendored 1.14i stays untouched &mdash;
+        the goal is a stable, auditable, no-deps binary for the next
+        35 years.</p>
+</aside>
 
 <section id="about">
     <h2>What is lha?</h2>

@@ -110,6 +110,19 @@ tbody tr:nth-child(even) { background: #f6f4eb; }
     background: #fdf6e3;
 }
 
+.tldr {
+    border: 1px solid #d8d8d0;
+    border-left: 3px solid #b04e00;
+    background: #fdf6e3;
+    padding: 1em 1.2em 1em 1.4em;
+    margin: 1.2em 0 1.2em 0;
+    color: #333;
+    font-size: 0.94em;
+    line-height: 1.55;
+}
+.tldr p { margin: 0.4em 0; }
+.tldr b { color: #1a1a1a; }
+
 footer {
     margin-top: 3rem;
     padding-top: 1.5rem;
