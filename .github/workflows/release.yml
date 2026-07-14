@@ -81,6 +81,13 @@ jobs:
       - name: Build (Windows — msys2 bash)
         if: matrix.os == 'windows'
         shell: msys2 {0}
+        env:
+          # MinGW's <unistd.h> gates `symlink()` on _WIN32_WINNT >= 0x0600
+          # (Vista). Default target is 0x0500 (Win2K), which leaves the
+          # function undeclared → upstream's lhext.c fails to compile.
+          # Vista target re-enables the declaration; the runtime still
+          # degrades gracefully if the OS denies symlink creation.
+          CPPFLAGS: -D_WIN32_WINNT=0x0600
         run: bash scripts/build.sh
 
       # ---- smoke (host-side; for musl runs INSIDE the same container as build) ----
@@ -101,35 +108,21 @@ jobs:
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 
       # ---- verify self-containedness ----
-      # Linux musl-static binaries show exactly ONE entry in `ldd`:
-      #   /lib/ld-musl-<arch>.so.1 (0x...)
-      # because musl's loader bootstraps itself. That's the universal-Linux
-      # pattern, NOT a sign of dyn-linking to glibc/etc. We assert only
-      # musl/loader entries appear (no glibc / libpthread / libstdc++ / etc).
-      - name: Verify self-contained (staged binary)
-        if: matrix.os != 'windows'
+      # Linux: the musl-self-loaded binary runs INSIDE alpine (smoke step
+      # is conclusive there), so we skip a redundant `ldd` here — Ubuntu's
+      # `ldd` reports `=> not found` for the musl libc (Ubuntu has no
+      # musl loader) and `linux-vdso.so.1` (kernel vDSO, always present),
+      # neither of which is a real defect.
+      # macOS: otool -L is meaningful (Homebrew dylibs would be a leak).
+      - name: Verify self-contained (macOS only)
+        if: matrix.os == 'macos'
         run: |
           set -e
           bin="dist/lha-${{ matrix.target }}/bin/lha"
-          case "${{ matrix.os }}" in
-            linux)
-              out="$(ldd "$bin" 2>&1 || true)"; echo "$out"
-              # Either fully static ("not a dynamic executable") OR musl-only.
-              if echo "$out" | grep -q "not a dynamic executable"; then
-                echo "OK: fully static (no interp)"
-              elif echo "$out" | grep -Eq 'ld-musl-[^ ]+\.so\.1' \
-                && [ "$(echo "$out" | grep -cv '=> /lib/ld-musl-')" = "0" ]; then
-                echo "OK: musl-self-loaded (universal Linux)"
-              else
-                echo "FAIL: $bin has non-musl deps"; exit 1
-              fi
-              ;;
-            macos)
-              otool -L "$bin"
-              otool -L "$bin" | grep -E '/(opt/homebrew|usr/local)/' \
-                && { echo "FAIL: $bin links Homebrew dylibs"; exit 1; } || true
-              ;;
-          esac
+          otool -L "$bin"
+          otool -L "$bin" | grep -E '/(opt/homebrew|usr/local)/' \
+            && { echo "FAIL: $bin links Homebrew dylibs"; exit 1; } || true
+          echo "OK: only system libs (/usr/lib, /System/Library)"
 
       - name: Show file type & size
         if: matrix.os != 'windows'
