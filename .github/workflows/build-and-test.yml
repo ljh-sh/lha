@@ -38,8 +38,10 @@ jobs:
           - { target: x86_64-linux-musl,  runner: ubuntu-latest,    os: linux, libc: musl, docker_arch: amd64 }
           - { target: aarch64-linux-musl, runner: ubuntu-24.04-arm, os: linux, libc: musl, docker_arch: arm64 }
           - { target: aarch64-macos,      runner: macos-14,         os: macos                 }
+          - { target: x86_64-macos,       runner: macos-14,         os: macos                 }
           - { target: x86_64-windows,     runner: windows-latest,   os: windows               }
-    continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' }}
+          - { target: aarch64-windows,    runner: windows-11-arm,   os: windows               }
+    continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' || matrix.target == 'aarch64-windows' }}
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -56,6 +58,10 @@ jobs:
           brew update
           brew install autoconf automake libtool
 
+      # Both mingw toolchains always installed (cheap on GitHub Actions —
+      # the runner's pacman cache makes repeat installs nearly free; less
+      # condition-branching in the workflow is worth more than the cycle
+      # savings).
       - name: Install deps (Windows MSYS2 + mingw64)
         if: matrix.os == 'windows'
         uses: msys2/setup-msys2@v2
@@ -64,8 +70,9 @@ jobs:
           update: true
           install: >-
             git autoconf automake libtool
-            make mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
-            base-devel
+            make base-devel
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
+            mingw-w64-aarch64-gcc
 
       # ---- build + smoke ----
       # Musl: single Alpine `docker run` does build + smoke (build deps
@@ -76,16 +83,42 @@ jobs:
         run: docker run --rm --platform linux/${{ matrix.docker_arch }} -v "$PWD":/w -w /w alpine:3.20 sh -c 'apk add --no-cache bash >/dev/null && bash /w/scripts/build-alpine.sh && bash /w/scripts/smoke.sh'
 
       - name: Build (macOS — host)
-        if: matrix.os == 'macos'
+        if: matrix.os == 'macos' && matrix.target == 'aarch64-macos'
+        run: bash scripts/build.sh
+
+      # Intel macOS: cross-compile from Apple Silicon macos-14 via clang
+      # -arch x86_64 (the Apple SDK is universal; no extra sysroot needed).
+      # Same script, just extra env vars. Verified locally on this Mac.
+      - name: Build (macOS x86_64 — cross-compile)
+        if: matrix.target == 'x86_64-macos'
+        env:
+          LHA_TARGET_ARCH: x86_64
+          LHA_TARGET_OS: apple-darwin
+          LHA_OS_HINT: darwin
         run: bash scripts/build.sh
 
       # MinGW's <unistd.h> doesn't declare symlink() — see scripts/no-symlink.h
       # header file for the full rationale.
-      - name: Build (Windows — msys2 bash)
-        if: matrix.os == 'windows'
+      - name: Build (Windows x86_64 — msys2 bash)
+        if: matrix.os == 'windows' && matrix.target == 'x86_64-windows'
         shell: msys2 {0}
         env:
           CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
+        run: bash scripts/build.sh
+
+      # Windows ARM64: msys2-installed aarch64-w64-mingw32 cross-gcc
+      # compiling on the windows-11-arm runner itself (native). Same
+      # no-symlink.h trick as x86_64; same shell quoting concern as
+      # elsewhere.
+      - name: Build (Windows ARM64 — msys2 bash)
+        if: matrix.os == 'windows' && matrix.target == 'aarch64-windows'
+        shell: msys2 {0}
+        env:
+          CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
+          LHA_TARGET_ARCH: aarch64
+          LHA_TARGET_OS: w64-mingw32
+          LHA_OS_HINT: windows
+          LHA_BUILD_TRIPLET: x86_64-w64-mingw32
         run: bash scripts/build.sh
 
       # ---- smoke on host (musl runs INSIDE its alpine container above; windows
