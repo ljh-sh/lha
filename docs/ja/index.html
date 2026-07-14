@@ -186,7 +186,19 @@
     </ul>
     <p>最新版は
         <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>。
-        OS とアーキテクチャに応じてファイルを選んでください：</p>
+    </p>
+    <p>
+        <b>macOS / Linux での最短経路（ワンライナー）：</b>
+    </p>
+    <pre><code>x i lha           # x-cmd install データベース（x.eget で ljh-sh/lha に解決）
+x eget use lha    # eget のベアネームリゾルバ — 同等、同じ release を引く</code></pre>
+    <p>
+        どちらも OS とアーキテクチャを自動判別し、
+        <a href="https://github.com/ljh-sh/lha/releases/latest">releases/latest</a>
+        から対応する静的バイナリを取得、<code>~/.local/bin/lha</code> に展開し
+        <code>PATH</code> に通します。コンパイラも brew tap も apt-add-repo も不要。
+    </p>
+    <p>または対応するアーカイブを直接ダウンロード：</p>
     <table>
         <thead><tr><th>プラットフォーム</th><th>ファイル</th><th>備考</th></tr></thead>
         <tbody>

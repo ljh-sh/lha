@@ -189,7 +189,21 @@
     <p>
         Latest releases at
         <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>.
-        Pick the file matching your OS and architecture:
+    </p>
+    <p>
+        <b>Fastest path on macOS / Linux (one shell line):</b>
+    </p>
+    <pre><code>x i lha           # x-cmd install database (resolves via x.eget → ljh-sh/lha)
+x eget use lha    # eget's bare-name resolver — equivalent, hits the same release</code></pre>
+    <p>
+        Both one-liners detect your OS + arch automatically, fetch the
+        matching static binary from
+        <a href="https://github.com/ljh-sh/lha/releases/latest">releases/latest</a>,
+        extract it to <code>~/.local/bin/lha</code>, and put it on
+        <code>PATH</code>. No compiler, no Homebrew tap, no apt-add-repo.
+    </p>
+    <p>
+        Or grab the per-platform tarball/zip directly:
     </p>
     <table>
         <thead><tr><th>Platform</th><th>File</th><th>Notes</th></tr></thead>

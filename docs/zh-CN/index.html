@@ -171,7 +171,19 @@
     </ul>
     <p>最新发布见
         <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>。
-        根据你的操作系统与架构选择对应文件：</p>
+    </p>
+    <p>
+        <b>macOS / Linux 最快路径（一行命令）：</b>
+    </p>
+    <pre><code>x i lha           # x-cmd 安装数据库（通过 x.eget 解析到 ljh-sh/lha）
+x eget use lha    # eget 的裸名解析器 — 等价，命中同一个 release</code></pre>
+    <p>
+        两者都会自动识别你的 OS + 架构，从
+        <a href="https://github.com/ljh-sh/lha/releases/latest">releases/latest</a>
+        拉取对应的静态二进制，解压到 <code>~/.local/bin/lha</code>，并加到
+        <code>PATH</code>。无需编译器、无需 brew tap、无需 apt-add-repo。
+    </p>
+    <p>或者直接下载对应平台的归档：</p>
     <table>
         <thead><tr><th>平台</th><th>文件</th><th>说明</th></tr></thead>
         <tbody>
