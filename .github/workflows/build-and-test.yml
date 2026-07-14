@@ -1,21 +1,25 @@
-name: release
+name: build-and-test
 
-# Publish stage: tag a v* (or trigger manually) → GitHub Release with
-# per-target tarball/zip + per-archive sha256 + top-level SHA256SUMS.
+# PR / push cheap-but-thorough test: every push to main and every PR
+# builds the full 4-target matrix (musl x86_64 + aarch64, aarch64-macos,
+# x86_64-windows), runs the upstream lha-test1..19 suite plus a 1 MiB
+# random round-trip, and uploads dist/ as workflow artifacts so a human
+# can grab any per-target binary for inspection.
 #
-# Splits cleanly with `build-and-test.yml`:
-#   - push / pull_request → build-and-test.yml (auto-test stage)
-#   - tag push / dispatch → THIS workflow (publish stage)
+# This is the "auto-test" stage per the ljh-sh dist regime convention
+# (see `.claude/skills/rust-oss/ci/` in mneme — same split for Rust
+# projects, adapted to autotools here). `release.yml` is the separate
+# "publish" stage — it only fires on v* tags and `workflow_dispatch`,
+# so this workflow's output is what gates a PR.
 #
-# The build matrix below is intentionally identical to build-and-test.yml
-# so a tag push produces a release in one shot, without depending on a
-# separate workflow_run pull. The trade-off is that a tag push runs the
-# matrix twice (here + in build-and-test.yml) ≈ +2 min — accepted for
-# the simpler workflow_run-free model.
+# Triggers: push (incl. merging a PR) to main; pull_request. We do NOT
+# listen to tag pushes here — release.yml handles those, and we don't
+# want the same matrix to run twice.
 on:
-  workflow_dispatch:
   push:
-    tags: ['v*']
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -25,17 +29,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---- main release matrix (tag + dispatch only) ----
   build:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-linux-musl,  runner: ubuntu-latest,    os: linux,   libc: musl, docker_arch: amd64 }
-          - { target: aarch64-linux-musl, runner: ubuntu-24.04-arm, os: linux,   libc: musl, docker_arch: arm64 }
-          - { target: aarch64-macos,      runner: macos-14,         os: macos                  }
-          - { target: x86_64-windows,     runner: windows-latest,   os: windows                }
+          - { target: x86_64-linux-musl,  runner: ubuntu-latest,    os: linux, libc: musl, docker_arch: amd64 }
+          - { target: aarch64-linux-musl, runner: ubuntu-24.04-arm, os: linux, libc: musl, docker_arch: arm64 }
+          - { target: aarch64-macos,      runner: macos-14,         os: macos                 }
+          - { target: x86_64-windows,     runner: windows-latest,   os: windows               }
     continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' }}
     env:
       TARGET: ${{ matrix.target }}
@@ -43,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # ---- install deps ----
-      - name: Install deps (Linux gnu — only used by actions that shell out)
+      - name: Install deps (Linux gnu — needed because the build also runs bare on Ubuntu runners for the alpine docker later)
         if: matrix.libc == 'musl'
         run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
 
@@ -64,7 +67,10 @@ jobs:
             make mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
             base-devel
 
-      # ---- build ----
+      # ---- build + smoke ----
+      # Musl: single Alpine `docker run` does build + smoke (build deps
+      # including `make` are needed for `make check` in smoke — running
+      # them in one container avoids re-installing for a second run).
       - name: Build + smoke on Alpine (musl)
         if: matrix.libc == 'musl'
         run: docker run --rm --platform linux/${{ matrix.docker_arch }} -v "$PWD":/w -w /w alpine:3.20 sh -c 'apk add --no-cache bash >/dev/null && bash /w/scripts/build-alpine.sh && bash /w/scripts/smoke.sh'
@@ -73,25 +79,18 @@ jobs:
         if: matrix.os == 'macos'
         run: bash scripts/build.sh
 
+      # MinGW's <unistd.h> doesn't declare symlink() — see scripts/no-symlink.h
+      # header file for the full rationale.
       - name: Build (Windows — msys2 bash)
         if: matrix.os == 'windows'
         shell: msys2 {0}
         env:
-          # MinGW's <unistd.h> does not declare `symlink()` (no _WIN32_WINNT
-          # level reliably helps), but upstream's lhext.c calls it
-          # unconditionally. Stub it via scripts/no-symlink.h which #defines
-          # `symlink(real,name)` as `0 - 1` (= -1). The file is force-
-          # included before any TU, so the call sites compile and the
-          # upstream error fall-through (make_parent_path + retry + unlink)
-          # runs at runtime — same path lha-test14 already assumes for
-          # MinGW. The macro definition must live in a header (rather than
-          # in `-Dsymlink(...)` on the command line) because /bin/sh, the
-          # make recipe interpreter, parses `(real,name)` as a subshell and
-          # rejects the rule before gcc ever sees it.
           CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
         run: bash scripts/build.sh
 
-      # ---- smoke (host-side; musl smoke already ran in alpine docker) ----
+      # ---- smoke on host (musl runs INSIDE its alpine container above; windows
+      #      has no /tmp mapping for lha's mkstemp template, so it's
+      #      informational-only) ----
       - name: Smoke test on host (gnu / macos)
         if: matrix.os != 'windows' && matrix.libc != 'musl'
         run: bash scripts/smoke.sh
@@ -109,7 +108,7 @@ jobs:
           "$LHA" --version 2>&1 | head -3 || "$LHA" 2>&1 | head -3 || true
           echo "OK: binary executes; round-trip smoke deferred to a future release."
 
-      # ---- package ----
+      # ---- package (so we keep an artifact for visual inspection) ----
       - name: Package (Linux / macOS)
         if: matrix.os != 'windows'
         run: TARGET=${{ matrix.target }} bash scripts/package.sh
@@ -121,7 +120,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 
-      # ---- verify self-containedness ----
+      # ---- verify ----
       - name: Verify self-contained (macOS only)
         if: matrix.os == 'macos'
         run: |
@@ -145,35 +144,11 @@ jobs:
           file dist/lha-${{ matrix.target }}/bin/lha.exe
           Get-ChildItem dist/lha-${{ matrix.target }}.zip | Format-Table Name, Length
 
-      # ---- upload artifact ----
-      - name: Upload artifact
+      # ---- upload artifact (for human inspection; NOT a release) ----
+      - name: Upload test artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lha-${{ matrix.target }}
+          name: lha-test-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-
-  # ---- publish on tag ----
-  release:
-    if: startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success'
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Generate SHA256SUMS
-        run: |
-          cd dist
-          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 \
-            | xargs -0 sha256sum | sed 's|^\([^ ]*\)  \./|\1  |' > SHA256SUMS
-          cat SHA256SUMS
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.sha256
-            dist/SHA256SUMS
-          generate_release_notes: true
+          retention-days: 7
