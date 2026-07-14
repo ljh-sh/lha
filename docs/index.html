@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 35 years of LZH, in a single static binary</title>
+<meta name="description" content="lha: the .lzh archiver reborn as a single statically-linked binary. Self-contained builds for Linux (musl), macOS, Windows — download, run, done.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">Skip to content</a>
+
+<div class="lang-switch">
+    <strong>en</strong> ·
+    <a href="zh-CN/index.html">zh-CN</a> ·
+    <a href="zh-TW/index.html">zh-TW</a> ·
+    <a href="ja/index.html">ja</a>
+</div>
+
+<section class="hero">
+    <h1>lha</h1>
+    <p class="tagline"><b>35 years of <code>.lzh</code> archiver history</b>,
+        now distributed as a single self-contained static binary.</p>
+    <p class="byline">
+        <code>lha</code> is the maintained fork of
+        <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        (LHa for UNIX 1.14i-ac20220213). We don't maintain lha &mdash; we
+        just build static binaries of it for every major platform.
+    </p>
+    <p>
+        <a class="cta" href="#download" id="cta-main">Download for your platform</a>
+        <a class="cta secondary" href="#history">Read the history</a>
+    </p>
+    <p class="cpu-note">Static binaries &middot; no <code>libc</code> install
+        required on any Linux, macOS, or Windows.</p>
+    <p class="meta">
+        <a href="https://github.com/ljh-sh/lha/releases">Latest release</a>
+        &middot; <a href="https://github.com/jca02266/lha">upstream</a>
+    </p>
+</section>
+
+<section id="about">
+    <h2>What is lha?</h2>
+    <p>
+        <b>LHA</b> (originally <b>LHarc</b>) is a file-compression and
+        archival format created in 1988-1989 by Haruyasu Yoshizaki
+        (a.k.a. Y.Tagawa). It uses the LZARI/LZHUF algorithms
+        (arithmetic coding variants of LZ77 + Huffman) and the dominant
+        archive format on MS-DOS and Japanese PCs through the 1990s,
+        long before ZIP became universal.
+    </p>
+    <p>
+        <code>lha</code> (the binary) handles every common LZH variant
+        (-lh0-, -lh1-, -lh4-, -lh5-, -lh6-, -lh7-, -lhx-, -lzs-, and the
+        -lhd- directory header) plus the legacy LArc and PMarc formats.
+        The modern fork is mostly used for unpacking ancient
+        <code>.lzh</code> archives on systems where nothing else will
+        open them.
+    </p>
+</section>
+
+<section id="history">
+    <h2>A brief history</h2>
+
+    <h3>1988–1989 — LHarc and LZARI</h3>
+    <p>
+        Haruyasu Yoshizaki (<b>Y.Tagawa</b>) released the original
+        <b>LHarc</b> for MS-DOS in 1988-1989. It was the first widely
+        used archive format in Japan to combine the
+        <b>LZARI</b> arithmetic-coding variant of LZ77 with static
+        Huffman. LZARI was originally published by Haruhiko Okumura;
+        Tagawa's contribution was making it practical as an archive
+        format.
+    </p>
+
+    <h3>1990–1991 — LZH enters</h3>
+    <p>
+        Yoshizaki refined the algorithm into <b>LZHUF</b> (LZ77 + dynamic
+        Huffman), released as the <b>LHA</b> format in 1990. The
+        archive header baked the compression method into the filename
+        suffix, which is why your old <code>.lzh</code> ends in
+        <code>-lh5-</code> or similar. Some modern compressors handle this
+        transparently; LHA-encoders choose the method explicitly.
+    </p>
+
+    <h3>1991–1993 — LHA for UNIX</h3>
+    <p>
+        Masaru Oki ported LHA to UNIX in 1991. Nobutaka Watazaki took
+        over maintenance and rewrote most of the codebase in 1993,
+        producing the canonical <b>LHa for UNIX</b> that ships to this
+        day in long-tail distributions. The man page we still ship with
+        this binary credits M. Oki and N. Watazaki &mdash; it's the
+        same source.
+    </p>
+    <p>
+        LHA for UNIX used a <b>custom freeware license</b> that required
+        attribution, disallowed calling derived works "LHA", and
+        explicitly forbade binary-only redistribution without
+        contacting the maintainer. This is why, to this day, Debian
+        ships it under <code>non-free/contrib</code>.
+    </p>
+
+    <h3>1994–2010 — ZIP era, J2K file format</h3>
+    <p>
+        PKZIP 2.0 (1993) and Info-ZIP <code>zip</code> (1994 onward)
+        displaced LHA on Western PCs. In Japan, <code>.lzh</code> archives
+        remained in heavy use through the early 2000s &mdash; popular
+        websites served LZH for distribution, BBS attach them as a
+        matter of course, and Windows <code>.exe</code> self-extracting
+        archives used the LHA format extensively. J2K / 2ch-style
+        bulletin boards exchanged LZH files well into the 2000s.
+    </p>
+
+    <h3>2010–2020 — quiet maintenance</h3>
+    <p>
+        File sizes and bandwidth grew; LHA's small-adder CPU cost
+        stopped mattering. 7-Zip's LZMA + <code>.7z</code> delivered
+        much better ratios. Watazaki's LHA for UNIX tree got the
+        occasional patch but no new releases.
+    </p>
+
+    <h3>2022 — autoconf revival (jca02266)</h3>
+    <p>
+        In 2022, GitHub user <b>jca02266</b> picked up the dormant tree
+        and gave it a modern autoconf build. The result &mdash;
+        <b>LHa for UNIX 1.14i-ac20220213</b> &mdash; is what's vendored
+        under <a href="upstream/lha/index.html">upstream/lha/</a> in
+        this repo. The original C source, the man pages, and the
+        upstream test suite are all unchanged.
+    </p>
+    <p>
+        jca02266's autoconf work is the first time the format became
+        trivially buildable on any modern Linux distro without
+        hand-patching Makefiles. ljh-sh/lha takes that and produces
+        pre-built static binaries so end users don't even need to
+        <code>apt install build-essential</code>.
+    </p>
+</section>
+
+<section id="formats">
+    <h2>Compression methods supported</h2>
+    <table>
+        <thead><tr><th>Suffix</th><th>Algorithm</th><th>Notes</th></tr></thead>
+        <tbody>
+            <tr><td><code>-lh0-</code></td><td>stored (no compression)</td>
+                <td>Used for fast archiving. The meta header still records the
+                    method so older tools decode it correctly.</td></tr>
+            <tr><td><code>-lh1-</code></td><td>LZARI (LZ77 + arithmetic)</td>
+                <td>Original LHarc method. Only the original MS-DOS
+                    toolchain wrote this; most archives you'll encounter
+                    are <code>-lh5-</code>.</td></tr>
+            <tr><td><code>-lh4-</code></td><td>LZARI variant</td>
+                <td>Reserved for future use. Rare in the wild.</td></tr>
+            <tr><td><code>-lh5-</code></td><td>LZHUF (LZ77 + dynamic Huffman)</td>
+                    <td><b>The default.</b> The standard LZH format since
+                        1990. What you'll most often encounter as
+                        <code>.lzh</code> today.</td></tr>
+            <tr><td><code>-lh6-</code></td><td>LZARI+static Huffman variant</td>
+                    <td>Experimental. Not widely seen.</td></tr>
+            <tr><td><code>-lh7-</code></td><td>LZHUF+tree variant</td>
+                    <td>Experimental.</td></tr>
+            <tr><td><code>-lhx-</code></td><td>LZH-compatibility marker</td>
+                    <td>Means the archive uses the updated LZH conventions
+                        with a separate <code>-lhd-</code> directory header.</td></tr>
+            <tr><td><code>-lzs-</code></td><td>LZARI variant</td>
+                    <td>Reserved.</td></tr>
+        </tbody>
+    </table>
+    <p class="note">
+        Beyond the compression methods, <code>lha</code> also reads and writes
+        the legacy <b>LArc</b> and <b>PMarc</b> formats (configurable at
+        configure time). See <code>lha --help</code> for current defaults.
+    </p>
+</section>
+
+<section id="download">
+    <h2>Download</h2>
+    <p>
+        Each archive contains:
+    </p>
+    <ul>
+        <li><code>bin/lha</code> — the binary</li>
+        <li><code>man/man1/lha.1</code> — the man page</li>
+        <li><code>README.md</code> — install instructions</li>
+    </ul>
+    <p>
+        Latest releases at
+        <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>.
+        Pick the file matching your OS and architecture:
+    </p>
+    <table>
+        <thead><tr><th>Platform</th><th>File</th><th>Notes</th></tr></thead>
+        <tbody>
+            <tr><td>Linux x86_64</td><td><code>lha-x86_64-linux-musl.tar.gz</code></td>
+                <td>Fully static. Runs on every Linux distro (Alpine, Debian, RHEL, Arch…).</td></tr>
+            <tr><td>Linux ARM64</td><td><code>lha-aarch64-linux-musl.tar.gz</code></td>
+                <td>Fully static. Use on aarch64 Linux (e.g., Graviton, Ampere Altra, Pi 4/5 64-bit).</td></tr>
+            <tr><td>macOS Apple Silicon</td><td><code>lha-aarch64-macos.tar.gz</code></td>
+                <td>Linker uses system <code>libiconv</code> (always present on macOS).</td></tr>
+            <tr><td>macOS Intel</td><td><code>lha-x86_64-macos.tar.gz</code></td>
+                <td>Same link semantics. Cross-compiled from Apple Silicon;
+                    runs natively on Intel Macs and under Rosetta on Apple Silicon.</td></tr>
+            <tr><td>Windows x86_64</td><td><code>lha-x86_64-windows.zip</code></td>
+                <td>Built with MinGW; no VC redistributables needed.</td></tr>
+        </tbody>
+    </table>
+    <p>
+        Install (optional, manual):
+    </p>
+    <pre><code>tar xzf lha-x86_64-linux-musl.tar.gz
+sudo install -m 0755 lha-x86_64-linux-musl/bin/lha /usr/local/bin/lha
+sudo install -m 0644 lha-x86_64-linux-musl/man/man1/lha.1 /usr/local/share/man/man1/
+man lha</code></pre>
+</section>
+
+<section>
+    <h2>Build it yourself</h2>
+    <p>
+        The wrapper scripts are plain POSIX shell. From the repo root:
+    </p>
+    <pre><code>git clone https://github.com/ljh-sh/lha.git
+cd lha
+bash scripts/build.sh         # host arch (autoreconf + configure + make)
+cd upstream/lha &amp;&amp; bash scripts/smoke.sh  # upstream test suite, 20 cases
+cd ../../ &amp;&amp; bash scripts/build-alpine.sh  # musl-static in alpine:3.20
+bash scripts/build.sh  &amp;&amp;  bash scripts/smoke.sh  # host-side round-trip</code></pre>
+    <p>
+        See <a href="https://github.com/ljh-sh/lha/blob/main/scripts/build.sh">scripts/build.sh</a>
+        for the per-target flags (host vs musl vs MSYS2), and
+        <a href="https://github.com/ljh-sh/lha/blob/main/NOTICE.md">NOTICE.md</a>
+        for the upstream license terms that apply to the vendored
+        binary.
+    </p>
+</section>
+
+<footer>
+    <p>
+        This site is the GitHub Pages root for
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a>. The
+        contained <code>lha</code> binary carries the upstream LHa
+        redistribution terms &mdash; see NOTICE.md. The text on this
+        page is dedicated to the public domain; the
+        <a href="https://github.com/ljh-sh/lha/blob/main/LICENSE">wrapper LICENSE</a>
+        is MIT. Last built:
+        <code id="last-built">see the commit history</code>.
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>

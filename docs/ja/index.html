@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 35 年の .lzh 歴史を、一つの静的バイナリに</title>
+<meta name="description" content="lha：.lzh アーカイバを単一の静的バイナリとして再構成。Linux (musl)、macOS、Windows の自己完結ビルド — ダウンロードしてすぐ使える。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">本文へスキップ</a>
+
+<div class="lang-switch">
+    <a href="../index.html">en</a> ·
+    <a href="../zh-CN/index.html">zh-CN</a> ·
+    <a href="../zh-TW/index.html">zh-TW</a> ·
+    <strong>ja</strong>
+</div>
+
+<section class="hero">
+    <h1>lha</h1>
+    <p class="tagline"><b>35 年の <code>.lzh</code> アーカイバの歴史</b>を、
+        自己完結した単一の静的バイナリとして配布。</p>
+    <p class="byline">
+        <code>lha</code> は
+        <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        （LHa for UNIX 1.14i-ac20220213）の保守フォークです。
+        私たちは lha 自体を保守しているわけではなく、
+        主要プラットフォーム向けの静的バイナリをビルドして配布しています。
+    </p>
+    <p>
+        <a class="cta" href="#download" id="cta-main">プラットフォーム別ダウンロード</a>
+        <a class="cta secondary" href="#history">歴史を読む</a>
+    </p>
+    <p class="cpu-note">静的バイナリ &middot; Linux・macOS・Windows 上で
+        <code>libc</code> の追加インストールは一切不要。</p>
+    <p class="meta">
+        <a href="https://github.com/ljh-sh/lha/releases">最新リリース</a>
+        &middot; <a href="https://github.com/jca02266/lha">上流</a>
+    </p>
+</section>
+
+<section id="about">
+    <h2>lha とは何か</h2>
+    <p>
+        <b>LHA</b>（旧名 <b>LHarc</b>）は 1988〜1989 年に吉崎英明
+        （Y.Tagawa）氏が作成したファイル圧縮・書庫形式です。
+        LZARI/LZHUF アルゴリズム（LZ77＋ハフマンの算術符号化変種）
+        を採用し、ZIP が普及する以前の 1990 年代、
+        MS-DOS と日本のパソコンで主流の書庫形式でした。
+    </p>
+    <p>
+        <code>lha</code>（バイナリ）は、主要な LZH 変種
+        （-lh0-、-lh1-、-lh4-、-lh5-、-lh6-、-lh7-、-lhx-、-lzs- および
+        -lhd- ディレクトリヘッダ）すべてと、古い LArc・PMarc 形式も扱えます。
+        他のツールでは開けない古い <code>.lzh</code> を
+        展開したいときのための、現代における「最後の砦」として
+        lha は使われています。
+    </p>
+</section>
+
+<section id="history">
+    <h2>略史</h2>
+
+    <h3>1988–1989 — LHarc と LZARI</h3>
+    <p>
+        吉崎英明（<b>Y.Tagawa</b>）氏は MS-DOS 向けの原版
+        <b>LHarc</b> を 1988〜1989 年に公開しました。奥村晴彦氏が
+        先に発表していた <b>LZARI</b>（LZ77 の算術符号化変種）に
+        静的ハフマンを組み合わせたもので、日本で初めて広く使われた
+        書庫形式です。Tagawa 氏の本当の貢献は、これを実用的な
+        アーカイブ形式に仕立て上げた点にあります。
+    </p>
+
+    <h3>1990–1991 — LZH の登場</h3>
+    <p>
+        吉崎氏はアルゴリズムを <b>LZHUF</b>（LZ77＋動的ハフマン）に
+        改良し、1990 年に <b>LHA</b> フォーマットとして公開しました。
+        圧縮方式をファイル名末尾に埋め込む設計（<code>-lh5-</code> 等）が
+        ここから生まれました。現代の圧縮ツールはこれをユーザーから
+        隠すことがほとんどですが、LHA のエンコーダは明示的に
+        方式を選択します。
+    </p>
+
+    <h3>1991–1993 — LHA for UNIX</h3>
+    <p>
+        1991 年に大木優（M.Oki）氏が LHA を UNIX へ移植。
+        1993 年に綿貫和彦（N.Watazaki）氏が保守を引き継ぎ、
+        ほぼ全面的に書き直して現在に至る <b>LHa for UNIX</b> の基礎を
+        築きました。私たちがこのバイナリに同梱している man ページの
+        著者欄には、今も M. Oki と N. Watazaki の名前があります &mdash;
+        ソースそのものだからです。
+    </p>
+    <p>
+        LHA for UNIX は<b>独自のフリーウェアライセンス</b>で配布されていました：
+        著者表示を必須とし、派生作品に「LHA」の名を使うことを禁じ、
+        連絡なしのバイナリのみ再配布を明示的に禁止 &mdash;
+        ということです。現在も Debian がこの理由で
+        <code>non-free/contrib</code> に置いているのはこの名残です。
+    </p>
+
+    <h3>1994–2010 — ZIP の時代、2ch 文化</h3>
+    <p>
+        PKZIP 2.0（1993 年）と Info-ZIP <code>zip</code>（1994 年〜）が
+        西側の PC では LHA を置き換えました。一方日本では
+        <code>.lzh</code> が 2000 年代序盤まで重用され続け &mdash;
+        配信には LZH 形式が使われるのが一般的で、BBS はあたりまえに
+        LZH を貼り付け、Windows 用 <code>.exe</code> 自己解凍書庫も多くが
+        LHA 形式でした。2ch 系の電子掲示板では LZH ファイルの交換が
+        2000 年代後半まで普通に行われていました。
+    </p>
+
+    <h3>2010–2020 — 静かな保守期</h3>
+    <p>
+        ファイルサイズが大きくなり、通信帯域も潤沢になりました。
+        LHA の控えめな CPU コストはもはや問題にならず、7-Zip の
+        LZMA + <code>.7z</code> が圧縮率で圧倒。Watazaki 氏の
+        LHA for UNIX ツリーは時折パッチが当たる程度で、新規リリースは
+        出なくなりました。
+    </p>
+
+    <h3>2022 — autoconf による再始動（jca02266）</h3>
+    <p>
+        2022 年、GitHub ユーザー <b>jca02266</b> 氏が長らく眠っていた
+        ツリーを引き取り、現代的 autoconf ビルドシステムを整備しました。
+        その成果である <b>LHa for UNIX 1.14i-ac20220213</b> を
+        本リポジトリでは
+        <a href="../index.html"><code>upstream/lha/</code></a>
+        下にそのまま取り込んでいます。元の C ソース、man ページ、
+        上流テストスイートは一切変更していません。
+    </p>
+    <p>
+        jca02266 氏の autoconf 対応により、このフォーマットが
+        任意の現代 Linux で苦労なくビルドできるようになりました。
+        ljh-sh/lha はここからさらに進め、ビルドすら不要 &mdash;
+        静的バイナリを配布することでエンドユーザーを
+        <code>apt install build-essential</code> から解放します。
+    </p>
+</section>
+
+<section id="formats">
+    <h2>対応圧縮方式</h2>
+    <table>
+        <thead><tr><th>サフィックス</th><th>アルゴリズム</th><th>備考</th></tr></thead>
+        <tbody>
+            <tr><td><code>-lh0-</code></td><td>無圧縮（書庫化のみ）</td>
+                <td>高速アーカイブ用。メタヘッダには方式が記録されるため
+                    古いツールでも復号可能。</td></tr>
+            <tr><td><code>-lh1-</code></td><td>LZARI（LZ77＋算術符号）</td>
+                <td>初代 LHarc の方式。オリジナルの MS-DOS ツールチェイン
+                    だけが書いていた。今目にする書庫の大半は
+                    <code>-lh5-</code>。</td></tr>
+            <tr><td><code>-lh4-</code></td><td>LZARI 変種</td>
+                    <td>将来用予約。実物はほぼない。</td></tr>
+            <tr><td><code>-lh5-</code></td><td>LZHUF（LZ77＋動的ハフマン）</td>
+                    <td><b>デフォルト。</b>1990 年以降の標準 LZH 形式。
+                        今日見る <code>.lzh</code> のほとんど。</td></tr>
+            <tr><td><code>-lh6-</code></td><td>LZARI + 静的ハフマン変種</td>
+                    <td>実験的。普及せず。</td></tr>
+            <tr><td><code>-lh7-</code></td><td>LZHUF ツリー変種</td>
+                    <td>実験的。</td></tr>
+            <tr><td><code>-lhx-</code></td><td>LZH 互換マーク</td>
+                    <td>独立した <code>-lhd-</code> ディレクトリヘッダを伴う
+                        新しい LZH 規約が使われていることを示す。</td></tr>
+            <tr><td><code>-lzs-</code></td><td>LZARI 変種</td>
+                    <td>予約。</td></tr>
+        </tbody>
+    </table>
+    <p class="note">
+        圧縮方式に加え、<code>lha</code> は旧 <b>LArc</b>・<b>PMarc</b>
+        形式も読み書きできます（configure 時）。既定値は
+        <code>lha --help</code> を参照してください。
+    </p>
+</section>
+
+<section id="download">
+    <h2>ダウンロード</h2>
+    <p>各アーカイブの同梱物：</p>
+    <ul>
+        <li><code>bin/lha</code> &mdash; バイナリ本体</li>
+        <li><code>man/man1/lha.1</code> &mdash; man ページ</li>
+        <li><code>README.md</code> &mdash; インストール手順</li>
+    </ul>
+    <p>最新版は
+        <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>。
+        OS とアーキテクチャに応じてファイルを選んでください：</p>
+    <table>
+        <thead><tr><th>プラットフォーム</th><th>ファイル</th><th>備考</th></tr></thead>
+        <tbody>
+            <tr><td>Linux x86_64</td><td><code>lha-x86_64-linux-musl.tar.gz</code></td>
+                <td>完全静的。あらゆる Linux（Alpine、Debian、RHEL、Arch…）
+                    で動作。</td></tr>
+            <tr><td>Linux ARM64</td><td><code>lha-aarch64-linux-musl.tar.gz</code></td>
+                <td>完全静的。aarch64 Linux（Graviton、Ampere Altra、
+                    Raspberry Pi 4/5 64-bit）で使用。</td></tr>
+            <tr><td>macOS Apple Silicon</td><td><code>lha-aarch64-macos.tar.gz</code></td>
+                <td>システムの <code>libiconv</code> にリンク（macOS 標準で
+                    必ず存在）。</td></tr>
+            <tr><td>macOS Intel</td><td><code>lha-x86_64-macos.tar.gz</code></td>
+                <td>同上。Apple Silicon からクロスコンパイル。Intel Mac では
+                    ネイティブ、Apple Silicon では Rosetta 経由で実行。</td></tr>
+            <tr><td>Windows x86_64</td><td><code>lha-x86_64-windows.zip</code></td>
+                <td>MinGW ビルド。VC++ ランタイム不要。</td></tr>
+        </tbody>
+    </table>
+    <p>インストール（任意、手動）：</p>
+    <pre><code>tar xzf lha-x86_64-linux-musl.tar.gz
+sudo install -m 0755 lha-x86_64-linux-musl/bin/lha /usr/local/bin/lha
+sudo install -m 0644 lha-x86_64-linux-musl/man/man1/lha.1 /usr/local/share/man/man1/
+man lha</code></pre>
+</section>
+
+<section>
+    <h2>自前でビルドする</h2>
+    <p>ラッパースクリプトは素の POSIX shell です。 リポジトリのルートで：</p>
+    <pre><code>git clone https://github.com/ljh-sh/lha.git
+cd lha
+bash scripts/build.sh         # ホストアーキ (autoreconf + configure + make)
+cd upstream/lha &amp;&amp; bash scripts/smoke.sh  # 上流テストスイート 20 ケース
+cd ../../ &amp;&amp; bash scripts/build-alpine.sh  # alpine:3.20 で musl-static
+bash scripts/build.sh  &amp;&amp;  bash scripts/smoke.sh  # ホスト側ラウンドトリップ</code></pre>
+    <p>ターゲット別フラグ（host / musl / MSYS2）は
+        <a href="https://github.com/ljh-sh/lha/blob/main/scripts/build.sh">scripts/build.sh</a>、
+        ベンダーバイナリに適用される上流ライセンス条項は
+        <a href="https://github.com/ljh-sh/lha/blob/main/NOTICE.md">NOTICE.md</a>
+        を参照してください。
+    </p>
+</section>
+
+<footer>
+    <p>
+        本サイトは
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a> の
+        GitHub Pages ルートです。収録されている <code>lha</code>
+        バイナリには上流 LHa の再配布条項が適用されます &mdash;
+        NOTICE.md 参照。本ページの文章はパブリックドメインです
+        &mdash; ラッパースクリプトの
+        <a href="https://github.com/ljh-sh/lha/blob/main/LICENSE">LICENSE</a>
+        は MIT。最終ビルド：
+        <code id="last-built">コミット履歴を参照</code>。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>

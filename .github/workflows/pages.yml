@@ -1,0 +1,34 @@
+name: pages
+
+# GitHub Pages deploy for the ljh-sh/lha site at docs/.
+# Plain static HTML (en + zh-CN + zh-TW + ja, 4 languages); no build step.
+# Triggers on push to main (re-deploys when docs/ changes) and on
+# workflow_dispatch (manual re-deploy).
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 35 年的 .lzh 归档历史，全部装进一个静态二进制</title>
+<meta name="description" content="lha：.lzh 归档器重生为单一静态链接的二进制。Linux (musl)、macOS、Windows 全部自带依赖，下载即用。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳到内容</a>
+
+<div class="lang-switch">
+    <a href="../index.html">en</a> ·
+    <strong>zh-CN</strong> ·
+    <a href="../zh-TW/index.html">zh-TW</a> ·
+    <a href="../ja/index.html">ja</a>
+</div>
+
+<section class="hero">
+    <h1>lha</h1>
+    <p class="tagline"><b>35 年的 <code>.lzh</code> 归档历史</b>，
+        如今以单一自包含的静态二进制分发。</p>
+    <p class="byline">
+        <code>lha</code> 是
+        <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        （LHa for UNIX 1.14i-ac20220213）的维护分支。我们并不维护 lha 本身 &mdash;
+        只是为各大平台预先构建好静态二进制。
+    </p>
+    <p>
+        <a class="cta" href="#download" id="cta-main">下载适合你平台的二进制</a>
+        <a class="cta secondary" href="#history">阅读历史</a>
+    </p>
+    <p class="cpu-note">静态二进制 &middot; 在任何 Linux、macOS 或 Windows 上
+        都不需要安装 <code>libc</code>。</p>
+    <p class="meta">
+        <a href="https://github.com/ljh-sh/lha/releases">最新发布</a>
+        &middot; <a href="https://github.com/jca02266/lha">上游源码</a>
+    </p>
+</section>
+
+<section id="about">
+    <h2>什么是 lha？</h2>
+    <p>
+        <b>LHA</b>（原名 <b>LHarc</b>）是 1988-1989 年由吉崎英明
+        （Y.Tagawa）创建的文件压缩与归档格式。它采用 LZARI/LZHUF 算法
+        （LZ77 + Huffman 的算术编码变体），是 1990 年代 MS-DOS 与日本个人电脑
+        上占主导地位的归档格式，远早于 ZIP 普及。
+    </p>
+    <p>
+        <code>lha</code>（这个二进制）支持所有常见的 LZH 变体
+        （<code>-lh0-</code>、<code>-lh1-</code>、<code>-lh4-</code>、<code>-lh5-</code>、
+        <code>-lh6-</code>、<code>-lh7-</code>、<code>-lhx-</code>、<code>-lzs-</code>，
+        以及 <code>-lhd-</code> 目录头），
+        加上旧式的 LArc 和 PMarc 格式。当其它工具都打不开老归档时，
+        <code>lha</code> 还能解出来。
+    </p>
+</section>
+
+<section id="history">
+    <h2>简史</h2>
+
+    <h3>1988–1989 — LHarc 与 LZARI</h3>
+    <p>
+        吉崎英明（<b>Y.Tagawa</b>）在 1988-1989 年发布了面向 MS-DOS 的
+        原版 <b>LHarc</b>。它是日本最早广泛使用的归档格式，
+        结合了奥村晴彦最初发表的 <b>LZARI</b> 算术编码（LZ77 变体）
+        和静态 Huffman。Tagawa 的贡献是把它作为归档格式实用化。
+    </p>
+
+    <h3>1990–1991 — LZH 的诞生</h3>
+    <p>
+        吉崎把算法改进为 <b>LZHUF</b>（LZ77 + 动态 Huffman），
+        在 1990 年以 <b>LHA</b> 格式发布。归档头部把压缩方式嵌入到
+        文件名后缀中，这也是为什么你的老 <code>.lzh</code> 文件会
+        以 <code>-lh5-</code> 之类结尾的原因。现代压缩工具大多会
+        对用户隐藏这一点；LHA 编码器则是显式选择压缩方式。
+    </p>
+
+    <h3>1991–1993 — LHA for UNIX</h3>
+    <p>
+        1991 年大木优（M.Oki）把 LHA 移植到 UNIX。1993 年
+        绵贯和彦（N.Watazaki）接管维护并几乎完全重写了代码库，
+        形成了沿用至今的 <b>LHa for UNIX</b>。我们今天随这个二进制
+        一起分发的 man page 仍然在原作者署名一栏写着 M. Oki 和 N. Watazaki &mdash;
+        这就是同一份源码。
+    </p>
+    <p>
+        LHA for UNIX 使用的是一种<b>自定义的自由软件许可证</b>：
+        要求署名、禁止将衍生作品称为 "LHA"、并明确禁止未经联系作者
+        进行仅二进制的再分发。这也是为什么直到今天 Debian 把它
+        放在 <code>non-free/contrib</code>。
+    </p>
+
+    <h3>1994–2010 — ZIP 时代，2ch 风格论坛</h3>
+    <p>
+        PKZIP 2.0（1993 年）和 Info-ZIP <code>zip</code>（1994 年起）在西方 PC 上
+        取代了 LHA。在日本，<code>.lzh</code> 归档一直流行到 2000 年代初期 &mdash;
+        热门网站用 LZH 分发文件，BBS 默认附加 LZH，Windows 下
+        <code>.exe</code> 自解压包也广泛采用 LHA。2ch 风格的电子公告板
+        交换 LZH 文件一直延续到 2000 年代后期。
+    </p>
+
+    <h3>2010–2020 — 静默维护期</h3>
+    <p>
+        文件越来越大、带宽越来越便宜，LHA 那种适度的 CPU 成本不再重要。
+        7-Zip 的 LZMA + <code>.7z</code> 在压缩率上大幅领先。Watazaki 的
+        LHa for UNIX 树不时有小补丁，但不再有正式发布。
+    </p>
+
+    <h3>2022 — autoconf 复活（jca02266）</h3>
+    <p>
+        2022 年，GitHub 用户 <b>jca02266</b> 接手了沉寂已久的代码树，
+        并给它加上了现代的 autoconf 构建系统。结果就是
+        <b>LHa for UNIX 1.14i-ac20220213</b> &mdash; 这正是本仓库
+        <a href="../index.html">vendored</a> 在 <code>upstream/lha/</code> 下的来源。
+        原始 C 代码、man pages 和上游测试套件都保持原样。
+    </p>
+    <p>
+        jca02266 的 autoconf 工作首次让这个格式能在任何现代 Linux
+        发行版上即可编译。ljh-sh/lha 在此基础上进一步生成预编译
+        静态二进制，让终端用户连 <code>apt install build-essential</code>
+        都不必做。
+    </p>
+</section>
+
+<section id="formats">
+    <h2>支持的压缩方式</h2>
+    <table>
+        <thead><tr><th>后缀</th><th>算法</th><th>说明</th></tr></thead>
+        <tbody>
+            <tr><td><code>-lh0-</code></td><td>不压缩（仅打包）</td>
+                <td>用于快速归档。元数据头部仍然记录方式，以便旧工具
+                    能正确解码。</td></tr>
+            <tr><td><code>-lh1-</code></td><td>LZARI（LZ77 + 算术编码）</td>
+                <td>原始 LHarc 方法。仅原版 MS-DOS 工具链会写这种；
+                    你今天遇到的多数归档是 <code>-lh5-</code>。</td></tr>
+            <tr><td><code>-lh4-</code></td><td>LZARI 变体</td>
+                    <td>保留备用。实际很少见。</td></tr>
+            <tr><td><code>-lh5-</code></td><td>LZHUF（LZ77 + 动态 Huffman）</td>
+                    <td><b>默认方式。</b>自 1990 年起的标准 LZH 格式。
+                        当下你遇到最多 <code>.lzh</code> 文件用的就是这种。</td></tr>
+            <tr><td><code>-lh6-</code></td><td>LZARI + 静态 Huffman 变体</td>
+                    <td>实验性。不常见。</td></tr>
+            <tr><td><code>-lh7-</code></td><td>LZHUF + 树变体</td>
+                    <td>实验性。</td></tr>
+            <tr><td><code>-lhx-</code></td><td>LZH 兼容性标记</td>
+                    <td>表示该归档使用更新的 LZH 约定，外加独立的
+                        <code>-lhd-</code> 目录头部。</td></tr>
+            <tr><td><code>-lzs-</code></td><td>LZARI 变体</td>
+                    <td>保留。</td></tr>
+        </tbody>
+    </table>
+    <p class="note">
+        除压缩方式外，<code>lha</code> 还支持读写旧式的 <b>LArc</b>
+        和 <b>PMarc</b> 格式（可在 configure 时启用）。详见
+        <code>lha --help</code>。
+    </p>
+</section>
+
+<section id="download">
+    <h2>下载</h2>
+    <p>每个归档包含：</p>
+    <ul>
+        <li><code>bin/lha</code> &mdash; 二进制本身</li>
+        <li><code>man/man1/lha.1</code> &mdash; man 手册</li>
+        <li><code>README.md</code> &mdash; 安装说明</li>
+    </ul>
+    <p>最新发布见
+        <a href="https://github.com/ljh-sh/lha/releases">github.com/ljh-sh/lha/releases</a>。
+        根据你的操作系统与架构选择对应文件：</p>
+    <table>
+        <thead><tr><th>平台</th><th>文件</th><th>说明</th></tr></thead>
+        <tbody>
+            <tr><td>Linux x86_64</td><td><code>lha-x86_64-linux-musl.tar.gz</code></td>
+                <td>完全静态。在任何 Linux 发行版（Alpine、Debian、RHEL、Arch…）
+                    上都可运行。</td></tr>
+            <tr><td>Linux ARM64</td><td><code>lha-aarch64-linux-musl.tar.gz</code></td>
+                <td>完全静态。用于 aarch64 Linux（如 Graviton、Ampere Altra、
+                    64 位 Pi 4/5）。</td></tr>
+            <tr><td>macOS Apple Silicon</td><td><code>lha-aarch64-macos.tar.gz</code></td>
+                <td>链接器使用系统 <code>libiconv</code>（macOS 自带）。</td></tr>
+            <tr><td>macOS Intel</td><td><code>lha-x86_64-macos.tar.gz</code></td>
+                <td>同上。从 Apple Silicon 交叉编译；在 Intel Mac 上原生运行，
+                    在 Apple Silicon 上经 Rosetta 运行。</td></tr>
+            <tr><td>Windows x86_64</td><td><code>lha-x86_64-windows.zip</code></td>
+                <td>用 MinGW 构建，无需 VC++ 运行库。</td></tr>
+        </tbody>
+    </table>
+    <p>安装（可选，手动）：</p>
+    <pre><code>tar xzf lha-x86_64-linux-musl.tar.gz
+sudo install -m 0755 lha-x86_64-linux-musl/bin/lha /usr/local/bin/lha
+sudo install -m 0644 lha-x86_64-linux-musl/man/man1/lha.1 /usr/local/share/man/man1/
+man lha</code></pre>
+</section>
+
+<section>
+    <h2>自己编译</h2>
+    <p>包装脚本是纯 POSIX shell。从仓库根目录：</p>
+    <pre><code>git clone https://github.com/ljh-sh/lha.git
+cd lha
+bash scripts/build.sh         # 当前架构（autoreconf + configure + make）
+cd upstream/lha &amp;&amp; bash scripts/smoke.sh  # 上游 20 个测试用例
+cd ../../ &amp;&amp; bash scripts/build-alpine.sh  # 在 alpine:3.20 中构建 musl-static
+bash scripts/build.sh  &amp;&amp;  bash scripts/smoke.sh  # 本机往返测试</code></pre>
+    <p>详见
+        <a href="https://github.com/ljh-sh/lha/blob/main/scripts/build.sh">scripts/build.sh</a>
+        （目标特定 flag：host / musl / MSYS2）以及
+        <a href="https://github.com/ljh-sh/lha/blob/main/NOTICE.md">NOTICE.md</a>
+        （适用于 vendored 二进制的上游许可证条款）。
+    </p>
+</section>
+
+<footer>
+    <p>
+        本页面是
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a> 的 GitHub Pages 根目录。
+        其中的 <code>lha</code> 二进制沿用上游 LHa 的再分发条款 &mdash;
+        见 NOTICE.md。本页文字属公共领域；包装脚本的
+        <a href="https://github.com/ljh-sh/lha/blob/main/LICENSE">LICENSE</a>
+        为 MIT。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>
