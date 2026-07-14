@@ -82,12 +82,17 @@ jobs:
         if: matrix.os == 'windows'
         shell: msys2 {0}
         env:
-          # MinGW's <unistd.h> gates `symlink()` on _WIN32_WINNT >= 0x0600
-          # (Vista). Default target is 0x0500 (Win2K), which leaves the
-          # function undeclared → upstream's lhext.c fails to compile.
-          # Vista target re-enables the declaration; the runtime still
-          # degrades gracefully if the OS denies symlink creation.
-          CPPFLAGS: -D_WIN32_WINNT=0x0600
+          # MinGW's <unistd.h> does not declare `symlink()` even under
+          # _WIN32_WINNT=0x0600 (depends on MinGW runtime version), but
+          # upstream's lhext.c calls it unconditionally. Define symlink as
+          # a macro that expands to (-1) so the call site compiles and
+          # always fails → the upstream fall-through (make_parent_path +
+          # retry) runs, which also returns -1, which upstream already
+          # handles (calls `unlink(name);` and continues). End result: the
+          # binary builds and runs; symlink creation on Windows gracefully
+          # no-ops (which matches lha-test14's "no symlink support" skip
+          # the upstream test driver already gates on MinGW).
+          CPPFLAGS: '-Dsymlink(real,name)=(-1)'
         run: bash scripts/build.sh
 
       # ---- smoke (host-side; for musl runs INSIDE the same container as build) ----
