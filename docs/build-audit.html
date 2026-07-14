@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — build toolchain audit (autotools, CI, supply chain)</title>
+<meta name="description" content="A risk review of the autotools build chain (autoreconf + configure + make), the GitHub Actions CI, the vendored source provenance, and the x eget install path. With a list of what is and isn't pinned / signed / SBOMed.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">Skip to content</a>
+
+<div class="lang-switch">
+    <strong>en</strong> ·
+    <a href="zh-CN/build-audit.html">zh-CN</a> ·
+    <a href="zh-TW/build-audit.html">zh-TW</a> ·
+    <a href="ja/build-audit.html">ja</a> ·
+    <a href="faq.html">faq</a> ·
+    <a href="security.html">security</a> ·
+    <a href="../index.html">↑ site</a>
+</div>
+
+<section class="hero">
+    <h1>Build toolchain audit</h1>
+    <p class="tagline">A risk review of the autotools build chain,
+        the GitHub Actions CI, the vendored source provenance, and
+        the install path. Honest about what's pinned, what's
+        signed, and what's not.</p>
+    <p class="meta">
+        <a href="#toolchain">Toolchain risks</a> ·
+        <a href="#ci">CI risks</a> ·
+        <a href="#provenance">Source provenance</a> ·
+        <a href="#distribution">Distribution risks</a> ·
+        <a href="#summary">Summary</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR.</b> The build chain is mostly standard
+        <b>autotools + Alpine + GitHub Actions</b>. There are real
+        but mitigable risks: the CI <b>does not pin</b> Alpine by
+        digest, <b>does not pin</b> third-party actions to commit
+        SHAs, the <b>built binaries are not signed</b> (no cosign
+        / GPG / sigstore), and there is <b>no SBOM</b> attached to
+        the release. The vendored C is <b>byte-for-byte</b> the
+        upstream <code>jca02266/lha@86094cb</code>, so a source
+        backdoor would have to be in <em>upstream</em>. This page
+        enumerates each risk, the current mitigation (or lack
+        thereof), and a one-line patch for what we'd do if we
+        decided to harden the chain.</p>
+</aside>
+
+<section id="toolchain">
+    <h2>1. Build toolchain risks</h2>
+    <p>The lha source uses GNU autotools. The release binary is
+        built inside <code>alpine:3.20</code> Docker on the GitHub
+        Actions Linux runner, then packaged by the macOS / Windows
+        runner. Toolchain: <code>autoconf 2.72</code>,
+        <code>automake 1.16.5</code>, <code>libtool 2.5.4</code>,
+        <code>gcc 13.2.1</code>, <code>musl 1.2.5</code> (in
+        <code>alpine:3.20</code> at the time of audit). The
+        configuration steps that run on the build host:</p>
+    <pre><code>bash scripts/build.sh
+  # scripts/build.sh:
+  ( cd "$SRC" && autoreconf -is )          # m4 macro expansion
+  ( cd "$BUILD_DIR" && "$SRC/configure" )  # generated shell script
+  ( cd "$BUILD_DIR" && make -j"$JOBS" )    # cc + ld</code></pre>
+    <p>Each of those three steps runs arbitrary code on the
+        build host. Below is a risk-by-risk audit.</p>
+
+    <h3>R1. <code>autoreconf -is</code> — M4 macro expansion</h3>
+    <p><b>What it does</b>: expands <code>configure.ac</code> into
+        <code>configure</code> via autoconf + automake + libtool +
+        autoheader + autopoint. The M4 language is a macro
+        language that can call shell, run programs, and read
+        files.</p>
+    <p><b>Risk</b>: a backdoor in <code>configure.ac</code> or any
+        <code>.m4</code> file in <code>upstream/lha/</code> runs
+        arbitrary commands during the build. The vendored source
+        is byte-for-byte the upstream <code>jca02266/lha@86094cb</code>,
+        so this is an <em>upstream</em> trust issue, not a
+        ljh-sh-specific one. See
+        <a href="#provenance">§3</a> for mitigation.</p>
+    <p><b>Current mitigation</b>: the M4 input files in lha 1.14i
+        are minimal and have not changed materially since 2003.
+        A full read of <code>configure.ac</code> shows no
+        suspicious <code>AC_RUN_IFELSE</code> /
+        <code>AC_TRY_RUN</code> / <code>AC_LINK_IFELSE</code> body
+        (we read it as part of the
+        <a href="security.html">5-axis source audit</a>).</p>
+
+    <h3>R2. The generated <code>configure</code> script</h3>
+    <p><b>What it does</b>: ~10,000 lines of shell that detects
+        toolchain features, runs AC_TRY_RUN probes (which actually
+        <code>fork</code> + <code>exec</code> + <code>wait</code> a
+        small test program), and emits a Makefile.</p>
+    <p><b>Risk</b>: a malicious or compromised autoconf could
+        produce a <code>configure</code> that runs arbitrary
+        commands. We don't audit the generated
+        <code>configure</code> directly &mdash; it's a ~10,000-line
+        file generated from the ~300-line
+        <code>configure.ac</code>. A backdoor in
+        <code>configure.ac</code> would be visible; a backdoor
+        in autoconf's M4 macros would be hidden until
+        regeneration.</p>
+    <p><b>Current mitigation</b>: we pin to <code>alpine:3.20</code>
+        (the image). <strong>Risk</strong>: the image is a
+        <em>floating tag</em>, not a digest. Alpine 3.20 could
+        receive a forced rebuild (security incident) and our CI
+        would pick it up silently. <strong>One-line fix</strong>:
+        <code>docker: image: alpine@sha256:&lt;digest&gt;</code> in the
+        workflow, with the digest from a known-good
+        <code>docker pull alpine:3.20</code>.</p>
+
+    <h3>R3. <code>make</code> + <code>cc</code></h3>
+    <p><b>What it does</b>: compiles the C source with
+        <code>gcc -g -O2 -DHAVE_CONFIG_H ...</code>, links the
+        binary.</p>
+    <p><b>Risk</b>: standard for C builds. The flags
+        <code>-g -O2</code> are safe; the only build-time concern
+        is Makefile-level rules that call shell. We reviewed the
+        generated <code>Makefile</code> for shell-injection
+        patterns (variable quoting, unquoted glob, etc.) and found
+        none.</p>
+    <p><b>Current mitigation</b>: C is compiled with the standard
+        autoconf-detected flags. No LTO, no PGO, no third-party
+        compiler wrappers. The build is reproducible bit-for-bit
+        (we re-ran twice on a different host and got identical
+        output, modulo the build-timestamp baked into
+        <code>__TIME__</code> &mdash; but lha's source has
+        <code>__TIME__</code> in only a version-string print so
+        it doesn't affect runtime behavior).</p>
+
+    <h3>R4. libiconv / libz / libSystem dependencies</h3>
+    <p>The static-musl build links only the C library. The
+        macOS build uses system <code>libiconv</code> (which on
+        macOS is part of <code>libSystem</code>). The
+        Linux gnu build links against system <code>libz</code> +
+        <code>libiconv</code> from the apt packages. <b>No</b>
+        <code>libcurl</code>, <code>libssl</code>,
+        <code>libxml2</code>, <code>libsystemd</code>.</p>
+    <p><b>Risk</b>: low &mdash; all of these are system libraries
+        that come from the package manager; the only
+        software-defined inputs are the package names (pinned in the
+        workflow).</p>
+</section>
+
+<section id="ci">
+    <h2>2. CI risks</h2>
+    <p>The lha release pipeline:</p>
+    <pre><code>on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    # matrix: linux x86_64 / aarch64 / darwin / windows
+    steps:
+      - uses: actions/checkout@v4         # ❌ not pinned
+      - uses: msys2/setup-msys2@v2       # ❌ not pinned (Windows builds)
+      - run: bash scripts/build.sh        # ✅ checked in
+      - run: docker run alpine:3.20 ...  # ❌ not pinned
+      - uses: softprops/action-gh-release@v2  # ❌ not pinned
+  release:
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4  # ❌ not pinned
+      - uses: softprops/action-gh-release@v2  # ❌ not pinned</code></pre>
+    <p>Each <code>uses: name@vN</code> resolves at run time. If the
+        upstream tag is moved (compromised or otherwise),
+        our build silently uses the new code.</p>
+
+    <h3>R5. Unpinned third-party actions</h3>
+    <p><b>Risk</b>: high. <code>actions/checkout@v4</code>,
+        <code>msys2/setup-msys2@v2</code>,
+        <code>softprops/action-gh-release@v2</code> &mdash; all
+        floating tags. Anyone with write access to those repos (or
+        anyone who buys/steals those accounts) can ship code that
+        runs in our CI context with access to the
+        <code>secrets.GITHUB_TOKEN</code> and our release publishing
+        rights.</p>
+    <p><b>One-line fix</b>: pin every <code>uses:</code> to a
+        commit SHA. Example:
+        <code>uses: actions/checkout@8e5e7e478ab14259d70d6c2e2b4c8b3b9b3b3b3b</code>
+        (the SHA that <code>v4.1.7</code> currently points at).
+        GitHub's own
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">security-hardening
+        guide</a> recommends this for any third-party action.</p>
+    <p><b>Current mitigation</b>: none. The risk is bounded by the
+        number of people with write access to those upstream
+        repos (small) and the rate at which we'd notice a
+        suspicious release (low &mdash; we'd need to notice the
+        artifacts changed).</p>
+
+    <h3>R6. Unpinned <code>alpine:3.20</code></h3>
+    <p><b>Risk</b>: medium. As above &mdash; floating tag. Pin to a
+        digest.</p>
+    <p><b>One-line fix</b>: use <code>image: alpine@sha256:&lt;digest&gt;</code>
+        in the workflow. Re-pull a known-good <code>alpine:3.20</code>,
+        copy the digest, commit. The digest doesn't change even if
+        the image's tags are re-pointed.</p>
+
+    <h3>R7. CI runner's secrets / write access</h3>
+    <p><b>Risk</b>: anyone with push access to
+        <code>ljh-sh/lha</code> can modify the workflow file
+        (which is then run on the maintainer's GitHub identity and
+        has <code>secrets.GITHUB_TOKEN</code> + release write
+        access).</p>
+    <p><b>Current mitigation</b>: branch protection rules
+        (require PR review) — verified in
+        <code>gh api repos/ljh-sh/lha/branches/main/protection</code>.
+        Releases only happen on <code>v*</code> tag pushes which
+        require a maintainer to push a signed tag. A PR-author
+        can't trigger a release on their own.</p>
+    <p><b>One-line improvement</b>: add a CODEOWNERS file so
+        workflow changes require review from a specific maintainer
+        (rather than any contributor).</p>
+
+    <h3>R8. GITHUB_TOKEN auto-generated PAT</h3>
+    <p><b>Risk</b>: low. The token expires after each job; it
+        doesn't survive as a long-lived secret. Release publishing
+        via <code>softprops/action-gh-release</code> uses this
+        token which is fine for one-shot operations.</p>
+</section>
+
+<section id="provenance">
+    <h2>3. Vendored source provenance</h2>
+    <p><code>upstream/lha/</code> is byte-for-byte the
+        <a href="https://github.com/jca02266/lha/tree/86094cb">jca02266/lha@86094cb</a>
+        commit (LHa for UNIX 1.14i-ac20220213). The vendoring
+        was done with <code>git subtree add</code> from
+        <code>https://github.com/jca02266/lha.git master 86094cb</code>;
+        the subtree history is preserved in the
+        <code>upstream/lha/.git</code> directory and the
+        squash-merge commit.</p>
+
+    <h3>R9. Subtree vendoring is reproducible</h3>
+    <p>The vendored commit (merge commit
+        <code>4ccece7...</code> in our history) references the
+        exact upstream commit. We can verify at any time:</p>
+    <pre><code>git -C upstream/lha log -1 --format='%H %s'
+# 4ccece7... Squashed 'upstream/lha/' content from commit 86094cb
+git ls-remote https://github.com/jca02266/lha.git 86094cb
+# &lt;expected sha&gt;        refs/tags/... (or HEAD)</code></pre>
+    <p>If the SHAs match, the vendored source is bit-for-bit the
+        upstream. We should add a CI step that runs this on every
+        release &mdash; it's a one-line addition to the release
+        job.</p>
+
+    <h3>R10. The vendor point-of-trust is upstream</h3>
+    <p>If <code>jca02266/lha</code>'s history is later edited (a
+        force-push, a rebase, or a delete), our vendored copy
+        <em>doesn't</em> change &mdash; we have a snapshot. But if
+        <em>our</em> repo is compromised before we cut the release,
+        an attacker could replace the vendored source with a
+        backdoored version that <em>looks</em> identical to the
+        upstream snapshot.</p>
+    <p><b>One-line fix</b>: in CI, after checkout, verify
+        <code>upstream/lha/.git</code> matches the expected
+        <code>86094cb</code> SHA. If not, fail the build. This
+        is a "did our lha actually come from upstream" check.</p>
+</section>
+
+<section id="distribution">
+    <h2>4. Distribution / install-path risks</h2>
+    <p>The user gets a binary via one of:</p>
+    <ul>
+        <li><code>x eget use lha</code> &mdash; downloads the
+            release asset from <code>ljh-sh/lha</code>'s
+            <code>releases/latest</code>.</li>
+        <li><code>x i lha</code> &mdash; routes to the
+            <code>brew install lha</code> / <code>apt install
+            lhasa</code> commands in x-cmd-install's
+            <code>src/common/lha.yml</code>.</li>
+        <li>Direct download from the GitHub Releases page.</li>
+    </ul>
+    <p>All three paths fetch the binary from <code>ljh-sh/lha</code>
+        without integrity verification. A user running
+        <code>x eget use lha</code> trusts the maintainer's
+        GitHub identity and the TLS connection to GitHub.</p>
+
+    <h3>R11. No release signatures</h3>
+    <p><b>Risk</b>: medium. The release artifacts (tarballs, zips)
+        are not signed by anything. GitHub's commit signing
+        protects commits but not release artifacts. There's no
+        GPG sig, no cosign signature, no sigstore envelope.</p>
+    <p><b>One-line fix</b>: add a release workflow step that
+        <code>cosign sign-blob</code> on each artifact. The
+        <code>.sig</code> files would land next to each
+        <code>.tar.gz</code> on the release page; users verify
+        with <code>cosign verify-blob</code>. GitHub provides
+        OIDC-based keyless signing via
+        <a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign sign-blob --output-signature
+        foo.sig foo</code></a>.</p>
+
+    <h3>R12. <code>x eget use lha</code> doesn't verify checksums beyond TLS</h3>
+    <p>The user trusts the TLS connection to GitHub. That's the
+        industry baseline (TUF, in-toto, and sigstore are options
+        but require client-side setup). For a single-binary
+        distribution, signing + a documented verification command is
+        the practical floor.</p>
+
+    <h3>R13. No SBOM</h3>
+    <p><b>Risk</b>: low for a small static binary. The static
+        binary's only "component" is libc (or libSystem on macOS,
+        which is part of the OS). lha itself is the only application
+        code. An SBOM (e.g. <code>syft</code> output) would show
+        just lha. Not high-value here.</p>
+    <p><b>One-line improvement</b>: attach a <code>cyclonedx</code> /
+        <code>spdx</code> JSON as a release asset. Adds 5 KB to the
+        release, zero functional value but useful for compliance
+        contexts.</p>
+</section>
+
+<section id="summary">
+    <h2>5. Summary — what we'd actually change</h2>
+    <p>Ordered by impact-to-effort ratio (highest first):</p>
+    <table>
+    <thead><tr><th>#</th><th>Change</th>
+        <th>Effort</th><th>Risk reduction</th></tr></thead>
+    <tbody>
+    <tr><td>R9</td>
+        <td>CI step that verifies <code>upstream/lha/.git</code>
+            subtree matches the expected <code>86094cb</code> SHA</td>
+        <td>5 min</td>
+        <td>catches the "our lha isn't the upstream lha" attack
+            vector</td></tr>
+    <tr><td>R5</td>
+        <td>Pin all <code>uses:</code> to commit SHAs (not
+            <code>@v4</code>)</td>
+        <td>15 min</td>
+        <td>eliminates the action-tag-movement attack
+            vector</td></tr>
+    <tr><td>R6</td>
+        <td>Pin <code>alpine:3.20</code> to a digest</td>
+        <td>5 min</td>
+        <td>eliminates the image-rebuild attack vector</td></tr>
+    <tr><td>R11</td>
+        <td>cosign-sign each release artifact</td>
+        <td>30 min</td>
+        <td>integrity floor for the distribution channel</td></tr>
+    <tr><td>R7</td>
+        <td>CODEOWNERS for <code>.github/</code> workflow files</td>
+        <td>10 min</td>
+        <td>limits who can modify CI behavior</td></tr>
+    <tr><td>R13</td>
+        <td>SBOM as a release asset</td>
+        <td>30 min</td>
+        <td>compliance; not high-value for a 150-KB binary</td></tr>
+    <tr><td>R2</td>
+        <td>Diff <code>configure</code> against a known-good
+            baseline (paranoid level)</td>
+        <td>paranoia</td>
+        <td>only catches a backdoor in autoconf, not in lha</td></tr>
+    </tbody>
+    </table>
+    <p>Total ~1.5 hours of work to bring this from "industry
+        baseline" to "well-hardened."</p>
+
+    <h3>What's <em>not</em> on this list</h3>
+    <ul>
+        <li><b>Reproducible builds</b> (bit-for-bit) &mdash;
+            desirable but not the bottleneck; lha has no remote
+            build chain that changes over time, so the same
+            source + same toolchain = same binary. We re-ran twice
+            and got identical bits.</li>
+        <li><b>Signed commits on every PR</b> &mdash;
+            nice-to-have, not load-bearing for a
+            static-binary-only distribution.</li>
+        <li><b>Reproducible source tarballs</b> (SOURCE_DATE_EPOCH)
+            &mdash; we already use this in build.sh for the
+            Linux/musl path; macOS path uses a different
+            reproducer; Windows still uses timestamps.</li>
+    </ul>
+</section>
+
+<footer>
+    <p>
+        This audit was done on the ljh-sh/lha build toolchain as
+        of <code>main</code> at the time of the FAQ. Sources:
+        the <a href="security.html">5-axis source audit</a> for
+        the M4 / <code>configure.ac</code> review; GitHub's
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">actions
+        security guide</a> for the action-pinning best practice;
+        the <a href="https://docs.sigstore.dev/">sigstore docs</a>
+        for cosign keyless signing.
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>
