@@ -1,23 +1,25 @@
 # Stage the built lha into a self-contained zip. Windows (MSYS2/mingw64).
-#   $env:TARGET  e.g. x86_64-windows
-#   $env:LHA_SRC (default $PSScriptRoot\..\upstream\lha)
-#   $env:DIST    (default $PSScriptRoot\..\dist)
+#   $env:TARGET    e.g. x86_64-windows
+#   $env:BUILD_DIR (default $Root\build — out-of-tree, matches scripts/build.sh)
+#   $env:LHA_SRC   (default $Root\upstream\lha — for the man page + upstream attribution)
+#   $env:DIST      (default $Root\dist)
 #
 # Stage layout inside dist\lha-$TARGET\:
-#   bin\lha.exe          (the binary)
+#   bin\lha.exe          (the binary, from out-of-tree BUILD_DIR)
 #   man\man1\lha.1
 #   README.md
 $ErrorActionPreference = 'Stop'
 
-$Root   = Split-Path -Parent $PSScriptRoot
-$LhaSrc = if ($env:LHA_SRC) { $env:LHA_SRC } else { Join-Path $Root 'upstream\lha' }
-$Dist   = if ($env:DIST)   { $env:DIST }   else { Join-Path $Root 'dist' }
-$Target = $env:TARGET
+$Root     = Split-Path -Parent $PSScriptRoot
+$BuildDir = if ($env:BUILD_DIR) { $env:BUILD_DIR } else { Join-Path $Root 'build' }
+$LhaSrc   = if ($env:LHA_SRC)   { $env:LHA_SRC }   else { Join-Path $Root 'upstream\lha' }
+$Dist     = if ($env:DIST)     { $env:DIST }      else { Join-Path $Root 'dist' }
+$Target   = $env:TARGET
 if (-not $Target) { throw 'set $env:TARGET, e.g. x86_64-windows' }
 
-$Bin  = Join-Path $LhaSrc 'src\lha.exe'
-$Man  = Join-Path $LhaSrc 'man\lha.1'
-if (-not (Test-Path $Bin)) { throw "$Bin not built" }
+$Bin = Join-Path $BuildDir 'src\lha.exe'
+$Man = Join-Path $LhaSrc   'man\lha.1'
+if (-not (Test-Path $Bin)) { throw "$Bin not built (BUILD_DIR=$BuildDir)" }
 if (-not (Test-Path $Man)) { throw "$Man not found" }
 
 $Stage = Join-Path $Dist "lha-$Target"
