@@ -102,6 +102,13 @@
     }
 
     function markActive(lang) {
+        // The currently-active language is rendered as a <strong>
+        // (no <a>); the other 3 are <a>. Mark aria-current on both
+        // shapes so the active item is identifiable to AT and CSS.
+        var strong = document.querySelector('.lang-switch strong');
+        if (strong && strong.textContent.trim() === lang) {
+            strong.setAttribute('aria-current', 'true');
+        }
         var links = document.querySelectorAll('.lang-switch a');
         for (var i = 0; i < links.length; i++) {
             var t = links[i].textContent.trim();
