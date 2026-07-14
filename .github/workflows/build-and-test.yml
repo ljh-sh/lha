@@ -40,8 +40,13 @@ jobs:
           - { target: aarch64-macos,      runner: macos-14,         os: macos                 }
           - { target: x86_64-macos,       runner: macos-14,         os: macos                 }
           - { target: x86_64-windows,     runner: windows-latest,   os: windows               }
-          - { target: aarch64-windows,    runner: windows-11-arm,   os: windows               }
-    continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' || matrix.target == 'aarch64-windows' }}
+          # aarch64-windows deferred: MSYS2 MINGW64 doesn't ship a
+          # mingw-w64-aarch64-gcc package (verified by direct API
+          # search across all MINGW64 repos). Restoring would require
+          # either LLVM clang with -target aarch64-w64-windows-msvc,
+          # or building mingw-w64-aarch64 from source. See issue
+          # notes in docs/ if added later.
+    continue-on-error: ${{ matrix.target == 'aarch64-linux-musl' || matrix.target == 'aarch64-macos' || matrix.target == 'x86_64-windows' }}
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -58,14 +63,13 @@ jobs:
           brew update
           brew install autoconf automake libtool
 
-      # msystem:MINGW64 gives a host-native toolchain:
-      #   - on ubuntu + windows-latest (x86_64): mingw-w64-x86_64-gcc
-      #   - on windows-11-arm (aarch64): the same mingw-w64-gcc, but native aarch64
-      # So we install ONLY what each job actually needs. The two jobs
-      # below split the install list by the target arch — aarch64-windows
-      # never needs the x86_64 cross-toolchain.
-      - name: Install deps (Windows MSYS2 — x86_64 toolchain)
-        if: matrix.os == 'windows' && matrix.target == 'x86_64-windows'
+      # msystem:MINGW64 gives a host-native toolchain on the runner
+      # (whatever arch it is). For x86_64-windows on windows-latest
+      # this yields mingw-w64-x86_64-gcc. (aarch64-windows deferred:
+      # MSYS2 MINGW64 doesn't ship a mingw-w64-aarch64-gcc package —
+      # see top-of-file matrix comment for the blocker.)
+      - name: Install deps (Windows MSYS2 + mingw64)
+        if: matrix.os == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -74,17 +78,6 @@ jobs:
             git autoconf automake libtool
             make base-devel
             mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
-
-      - name: Install deps (Windows MSYS2 — aarch64 native toolchain)
-        if: matrix.target == 'aarch64-windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git autoconf automake libtool
-            make base-devel
-            mingw-w64-gcc mingw-w64-libiconv
 
       # ---- build + smoke ----
       # Musl: single Alpine `docker run` does build + smoke (build deps
@@ -113,17 +106,6 @@ jobs:
       # header file for the full rationale.
       - name: Build (Windows x86_64 — msys2 bash)
         if: matrix.os == 'windows' && matrix.target == 'x86_64-windows'
-        shell: msys2 {0}
-        env:
-          CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
-        run: bash scripts/build.sh
-
-      # Windows ARM64: the windows-11-arm runner is native aarch64, and the
-      # msys2:mingsw64 GCC above is aarch64-w64-mingw32 by default. So this
-      # builds natively — no cross-toolchain, no LHA_TARGET_ARCH override.
-      # Same no-symlink.h trick as x86_64.
-      - name: Build (Windows ARM64 — msys2 bash, native)
-        if: matrix.target == 'aarch64-windows'
         shell: msys2 {0}
         env:
           CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
