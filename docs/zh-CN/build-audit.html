@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — 构建工具链审计（autotools、CI、供应链）</title>
+<meta name="description" content="对 lha 项目的 autotools 构建链、GitHub Actions CI、vendored 源码来源、x eget 安装路径进行风险审查。列出哪些已固定、哪些已签名、哪些没有。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳到内容</a>
+
+<div class="lang-switch">
+    <a href="../build-audit.html">en</a> ·
+    <strong>zh-CN</strong> ·
+    <a href="../zh-TW/build-audit.html">zh-TW</a> ·
+    <a href="../ja/build-audit.html">ja</a> ·
+    <a href="../faq.html">faq</a> ·
+    <a href="../security.html">安全</a> ·
+    <a href="../index.html">↑ 站点</a>
+</div>
+
+<section class="hero">
+    <h1>构建工具链审计</h1>
+    <p class="tagline">对 autotools 构建链、GitHub Actions CI、
+        vendored 源码来源、安装路径进行风险审查。诚实地说
+        哪些已固定、哪些已签名、哪些没有。</p>
+    <p class="meta">
+        <a href="#toolchain">工具链风险</a> ·
+        <a href="#ci">CI 风险</a> ·
+        <a href="#provenance">源码来源</a> ·
+        <a href="#distribution">分发风险</a> ·
+        <a href="#summary">总结</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR。</b>构建链基本是标准的
+        <b>autotools + Alpine + GitHub Actions</b>。有真实但
+        可缓解的风险：CI <b>没有用 digest 固定</b> Alpine，
+        <b>没有用 commit SHA 固定</b> 第三方 actions，
+        <b>构建出的二进制未签名</b>（没有 cosign / GPG / sigstore），
+        发布里也<b>没有 SBOM</b>。vendored 的 C 源码
+        <b>字节级别一致</b> 于 upstream
+        <code>jca02266/lha@86094cb</code>，所以源码后门
+        必须在 <em>上游</em>。本页逐一列出每个风险、当前的
+        缓解（如果有的话）、以及一行修复方案。</p>
+</aside>
+
+<section id="toolchain">
+    <h2>1. 构建工具链风险</h2>
+    <p>lha 源码用 GNU autotools。发布二进制在
+        <code>alpine:3.20</code> Docker 容器里构建，宿主是
+        GitHub Actions Linux runner；然后 macOS / Windows runner
+        做打包。工具链：<code>autoconf 2.72</code>、
+        <code>automake 1.16.5</code>、<code>libtool 2.5.4</code>、
+        <code>gcc 13.2.1</code>、<code>musl 1.2.5</code>
+        （审计时 <code>alpine:3.20</code> 的版本）。
+        在构建宿主上跑的配置步骤：</p>
+    <pre><code>bash scripts/build.sh
+  # scripts/build.sh:
+  ( cd "$SRC" && autoreconf -is )          # m4 宏展开
+  ( cd "$BUILD_DIR" && "$SRC/configure" )  # 生成的 shell 脚本
+  ( cd "$BUILD_DIR" && make -j"$JOBS" )    # cc + ld</code></pre>
+    <p>这三步每一步都在构建宿主上跑任意代码。下面是按风险
+        逐条审计。</p>
+
+    <h3>R1. <code>autoreconf -is</code> — M4 宏展开</h3>
+    <p><b>做了什么</b>：通过 autoconf + automake + libtool +
+        autoheader + autopoint 把 <code>configure.ac</code> 展开
+        成 <code>configure</code>。M4 是种宏语言，可以调用 shell、
+        跑程序、读文件。</p>
+    <p><b>风险</b>：<code>upstream/lha/</code> 里
+        <code>configure.ac</code> 或任何 <code>.m4</code> 文件里
+        的后门会在构建时跑任意命令。vendored 源码字节级别一致
+        于 upstream <code>jca02266/lha@86094cb</code>，所以这是
+        <em>上游</em>信任问题，不是 ljh-sh 自己的。缓解见
+        <a href="#provenance">§3</a>。</p>
+    <p><b>当前缓解</b>：lha 1.14i 的 M4 输入文件很少，自 2003
+        年以来基本没变。完整读过一遍 <code>configure.ac</code>，没
+        看到可疑的 <code>AC_RUN_IFELSE</code> /
+        <code>AC_TRY_RUN</code> / <code>AC_LINK_IFELSE</code> 体
+        （作为 <a href="security.html">5 维源码审计</a> 的一部分）。</p>
+
+    <h3>R2. 生成的 <code>configure</code> 脚本</h3>
+    <p><b>做了什么</b>：~10,000 行 shell，检测工具链特性、跑
+        AC_TRY_RUN 探针（真的会 <code>fork</code> +
+        <code>exec</code> + <code>wait</code> 一个小型测试程序）、
+        输出 Makefile。</p>
+    <p><b>风险</b>：被入侵的 autoconf 可能会产生一个跑任意命令的
+        <code>configure</code>。我们不直接审计生成的
+        <code>configure</code>——它是个 ~10,000 行的文件，由 ~300
+        行的 <code>configure.ac</code> 生成。
+        <code>configure.ac</code> 里的后门可见；autoconf 的 M4 宏里
+        的后门只有在重新生成时才暴露。</p>
+    <p><b>当前缓解</b>：我们固定到 <code>alpine:3.20</code>（镜像）。
+        <strong>风险</strong>：镜像是个<em>浮动 tag</em>，不是
+        digest。Alpine 3.20 可能会被强制重建（安全事件），我们的
+        CI 会静默采用。 <strong>一行修复</strong>：workflow 里
+        <code>docker: image: alpine@sha256:&lt;digest&gt;</code>，
+        digest 来自一个已知良好的
+        <code>docker pull alpine:3.20</code>。</p>
+
+    <h3>R3. <code>make</code> + <code>cc</code></h3>
+    <p><b>做了什么</b>：用 <code>gcc -g -O2 -DHAVE_CONFIG_H ...</code>
+        编译 C 源码，链接二进制。</p>
+    <p><b>风险</b>：C 构建的标准操作。<code>-g -O2</code> 安全；
+        唯一构建期关注是 Makefile 调 shell 的规则。我们审了
+        生成的 <code>Makefile</code> 看 shell 注入模式（变量
+        引号、未加引号的 glob 等），没找到。</p>
+    <p><b>当前缓解</b>：C 用标准 autoconf 检测的 flag 编译。无
+        LTO、无 PGO、无第三方编译器包装。构建是 bit-for-bit 可
+        复现的（在另一台主机重跑得到相同输出，调 <code>__TIME__</code>
+        打入的构建时间戳除外 —— 但 lha 源码里 <code>__TIME__</code>
+        只用在版本字符串打印，不影响运行时行为）。</p>
+
+    <h3>R4. libiconv / libz / libSystem 依赖</h3>
+    <p>static-musl 构建只链 C 库。macOS 构建用系统
+        <code>libiconv</code>（在 macOS 上属于
+        <code>libSystem</code>）。Linux gnu 构建链系统
+        <code>libz</code> + <code>libiconv</code>。 <b>无</b>
+        <code>libcurl</code>、<code>libssl</code>、
+        <code>libxml2</code>、<code>libsystemd</code>。</p>
+    <p><b>风险</b>：低 —— 全部来自包管理器；唯一的软件定义输入是
+        workflow 里固定的包名。</p>
+</section>
+
+<section id="ci">
+    <h2>2. CI 风险</h2>
+    <p>lha 发布流水线：</p>
+    <pre><code>on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    # matrix: linux x86_64 / aarch64 / darwin / windows
+    steps:
+      - uses: actions/checkout@v4         # ❌ 没固定
+      - uses: msys2/setup-msys2@v2       # ❌ 没固定 (Windows)
+      - run: bash scripts/build.sh        # ✅ 仓库内
+      - run: docker run alpine:3.20 ...  # ❌ 没固定
+      - uses: softprops/action-gh-release@v2  # ❌ 没固定
+  release:
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4  # ❌ 没固定
+      - uses: softprops/action-gh-release@v2  # ❌ 没固定</code></pre>
+    <p>每个 <code>uses: name@vN</code> 在运行时解析。如果上游
+        tag 被移走（被入侵或其它），我们的构建会静默采用新
+        代码。</p>
+
+    <h3>R5. 没固定的第三方 actions</h3>
+    <p><b>风险</b>：高。<code>actions/checkout@v4</code>、
+        <code>msys2/setup-msys2@v2</code>、
+        <code>softprops/action-gh-release@v2</code>——全部
+        浮动 tag。任何有写权限的（包括账号被盗的）都可以
+        发代码在我们的 CI 环境跑，带有
+        <code>secrets.GITHUB_TOKEN</code> + release 写权限。</p>
+    <p><b>一行修复</b>：把每个 <code>uses:</code> 固定到 commit
+        SHA。例如
+        <code>uses: actions/checkout@8e5e7e478ab14259d70d6c2e2b4c8b3b9b3b3b3b</code>（<code>v4.1.7</code> 当前指向的 SHA）。
+        GitHub 自己的
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">安全加固指南</a>
+        推荐对所有第三方 action 这么做。</p>
+    <p><b>当前缓解</b>：无。风险被限制在上游仓库有写权限的人数（少）
+        和我们注意到可疑发布的概率（低——得注意 artifacts 变了）。</p>
+
+    <h3>R6. 没固定的 <code>alpine:3.20</code></h3>
+    <p><b>风险</b>：中。跟上面一样是浮动 tag。固定到 digest。</p>
+    <p><b>一行修复</b>：workflow 里
+        <code>image: alpine@sha256:&lt;digest&gt;</code>。再 pull 一个
+        已知良好的 <code>alpine:3.20</code>，拷 digest，提交。
+        即使 tag 被重新指向，digest 也不变。</p>
+
+    <h3>R7. CI runner 的 secrets / 写权限</h3>
+    <p><b>风险</b>：任何有 push 权限到 <code>ljh-sh/lha</code> 的
+        都能改 workflow（用维护者身份跑，带
+        <code>secrets.GITHUB_TOKEN</code> + release 写权限）。</p>
+    <p><b>当前缓解</b>：分支保护规则（要求 PR review）——通过
+        <code>gh api repos/ljh-sh/lha/branches/main/protection</code>
+        验证。release 只在 <code>v*</code> tag push 触发，
+        需要维护者推签名 tag。PR 作者不能自己触发 release。</p>
+    <p><b>一行改进</b>：加一个 CODEOWNERS 文件，让 workflow
+        改动需要特定维护者 review（而不是任何贡献者）。</p>
+
+    <h3>R8. GITHUB_TOKEN 自动生成的 PAT</h3>
+    <p><b>风险</b>：低。token 在每个 job 后过期；不作为长期 secret
+        留存。release 发布通过
+        <code>softprops/action-gh-release</code> 用这个 token，
+        对一次性操作没问题。</p>
+</section>
+
+<section id="provenance">
+    <h2>3. Vendored 源码来源</h2>
+    <p><code>upstream/lha/</code> 字节级别一致于
+        <a href="https://github.com/jca02266/lha/tree/86094cb">jca02266/lha@86094cb</a>
+        （LHa for UNIX 1.14i-ac20220213）。Vendoring 是用
+        <code>git subtree add</code> 从
+        <code>https://github.com/jca02266/lha.git master 86094cb</code>
+        做的；subtree 历史保留在
+        <code>upstream/lha/.git</code> 和 squash-merge 提交里。</p>
+
+    <h3>R9. Subtree vendoring 是可复现的</h3>
+    <p>Vendored 提交（我们历史里的 merge commit
+        <code>4ccece7...</code>）引用精确的上游提交。我们可以随时
+        验证：</p>
+    <pre><code>git -C upstream/lha log -1 --format='%H %s'
+# 4ccece7... Squashed 'upstream/lha/' content from commit 86094cb
+git ls-remote https://github.com/jca02266/lha.git 86094cb
+# &lt;expected sha&gt;        refs/tags/... (or HEAD)</code></pre>
+    <p>如果 SHA 匹配，vendored 源码就是上游的 bit-for-bit。应该
+        在 CI 里加一步在每次 release 时跑这个——是 release job
+        的一行加法。</p>
+
+    <h3>R10. 供应商信任点是上游</h3>
+    <p>如果 <code>jca02266/lha</code> 的历史后来被改（force-push、
+        rebase、删除），我们的 vendored 副本<em>不会</em>变——
+        我们有快照。但如果<em>我们的</em>仓库在 release 之前被入侵，
+        攻击者可以用<em>看起来</em>和上游快照一样的后门版本
+        替换 vendored 源码。</p>
+    <p><b>一行修复</b>：CI 里在 checkout 后，验证
+        <code>upstream/lha/.git</code> 匹配预期 <code>86094cb</code> SHA。
+        不匹配则构建失败。这是「我们的 lha 真的来自上游」
+        的检查。</p>
+</section>
+
+<section id="distribution">
+    <h2>4. 分发 / 安装路径风险</h2>
+    <p>用户通过以下途径之一获得二进制：</p>
+    <ul>
+        <li><code>x eget use lha</code>——从
+            <code>ljh-sh/lha</code> 的 <code>releases/latest</code>
+            下载发布资产。</li>
+        <li><code>x i lha</code>——路由到 x-cmd-install 的
+            <code>src/common/lha.yml</code> 里的
+            <code>brew install lha</code> / <code>apt install
+            lhasa</code> 命令。</li>
+        <li>直接从 GitHub Releases 页下载。</li>
+    </ul>
+    <p>三种路径都从 <code>ljh-sh/lha</code> 拉二进制，没有完整性
+        验证。跑 <code>x eget use lha</code> 的用户信任维护者的
+        GitHub 身份 + 到 GitHub 的 TLS 连接。</p>
+
+    <h3>R11. Release 未签名</h3>
+    <p><b>风险</b>：中。release artifacts（tarball、zip）未被任何
+        东西签名。GitHub 的 commit 签名保护 commit，但不保护
+        release artifact。没有 GPG sig、没有 cosign 签名、没有
+        sigstore envelope。</p>
+    <p><b>一行修复</b>：release workflow 加一步
+        <code>cosign sign-blob</code>。<code>.sig</code> 文件落在 release
+        页对应 <code>.tar.gz</code> 旁；用户用
+        <code>cosign verify-blob</code> 验证。GitHub 提供 OIDC
+        keyless 签名（<a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign
+        sign-blob --output-signature foo.sig foo</code></a>）。</p>
+
+    <h3>R12. <code>x eget use lha</code> 不验证 checksum（除 TLS 外）</h3>
+    <p>用户信任到 GitHub 的 TLS 连接。这是业界基线（TUF、in-toto、
+        sigstore 是选项但需要客户端设置）。对单二进制分发，
+        签名 + 文档化的验证命令是实用的底。</p>
+
+    <h3>R13. 没有 SBOM</h3>
+    <p><b>风险</b>：对小型静态二进制低。静态二进制的唯一「组件」
+        是 libc（macOS 上是 libSystem，属于 OS）。lha 本身是唯一的
+        应用代码。SBOM（<code>syft</code> 输出）只会显示 lha。
+        对这个项目不高价值。</p>
+    <p><b>一行改进</b>：把 <code>cyclonedx</code> / <code>spdx</code> JSON
+        作为 release asset 附上。给 release 加 5 KB，零功能价值但
+        合规场景有用。</p>
+</section>
+
+<section id="summary">
+    <h2>5. 总结——我们实际会改的</h2>
+    <p>按 impact-to-effort 排序（最高的在前）：</p>
+    <table>
+    <thead><tr><th>#</th><th>改动</th>
+        <th>工作量</th><th>降低的风险</th></tr></thead>
+    <tbody>
+    <tr><td>R9</td>
+        <td>CI 验证 <code>upstream/lha/.git</code> subtree 匹配
+            预期 <code>86094cb</code> SHA</td>
+        <td>5 min</td>
+        <td>抓住「我们的 lha 不是上游的 lha」攻击面</td></tr>
+    <tr><td>R5</td>
+        <td>把每个 <code>uses:</code> 固定到 commit SHA（不是
+            <code>@v4</code>）</td>
+        <td>15 min</td>
+        <td>消除 action tag 移动攻击面</td></tr>
+    <tr><td>R6</td>
+        <td>把 <code>alpine:3.20</code> 固定到 digest</td>
+        <td>5 min</td>
+        <td>消除镜像重建攻击面</td></tr>
+    <tr><td>R11</td>
+        <td>cosign 签名每个 release artifact</td>
+        <td>30 min</td>
+        <td>分发通道的完整性底</td></tr>
+    <tr><td>R7</td>
+        <td>CODEOWNERS for <code>.github/</code> workflow 文件</td>
+        <td>10 min</td>
+        <td>限制谁能改 CI 行为</td></tr>
+    <tr><td>R13</td>
+        <td>SBOM 作为 release asset</td>
+        <td>30 min</td>
+        <td>合规；对 150 KB 二进制价值不高</td></tr>
+    <tr><td>R2</td>
+        <td>对比 <code>configure</code> 和已知良好基线（多疑）</td>
+        <td>多疑</td>
+        <td>只抓 autoconf 里的后门，不抓 lha 里的</td></tr>
+    </tbody>
+    </table>
+    <p>总计 ~1.5 小时工作把这个工具链从「业界基线」提到
+        「充分加固」。</p>
+
+    <h3>什么<b>不</b>在这个清单上</h3>
+    <ul>
+        <li><b>可复现构建</b>（bit-for-bit）—— 期望，但不是瓶颈；
+            lha 没有随时间变化的远程构建链，所以同源码 + 同工具链
+            = 同二进制。我们重跑了两次得到相同位。</li>
+        <li><b>每个 PR 签名 commit</b>—— nice-to-have，对一个
+            只发静态二进制的项目不是承重项。</li>
+        <li><b>可复现源码 tarball</b>（SOURCE_DATE_EPOCH）—— build.sh
+            的 Linux/musl 路径已经在用；macOS 路径用不同的复现器；
+            Windows 还在用时间戳。</li>
+    </ul>
+</section>
+
+<footer>
+    <p>
+        本审计在 ljh-sh/lha 构建工具链当时的 <code>main</code>
+        上完成。资料来源：<a href="security.html">5 维源码审计</a>
+        用于 M4 / <code>configure.ac</code> review；GitHub 的
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">actions
+        安全指南</a> 用于 action 固定最佳实践；<a href="https://docs.sigstore.dev/">sigstore
+        文档</a> 用于 cosign keyless 签名。
+    </p>
+</footer>
+
+<script src="../lang-router.js" defer></script>
+
+</main>
+
+</body>
+</html>

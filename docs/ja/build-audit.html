@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — ビルドツールチェーン監査（autotools、CI、サプライチェーン）</title>
+<meta name="description" content="lha プロジェクトの autotools ビルドチェーン、GitHub Actions CI、ベンダーされたソースの来歴、x eget インストール経路のリスクレビュー。ピン留め・署名・SBOM の現状を正直に。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">本文へスキップ</a>
+
+<div class="lang-switch">
+    <a href="../build-audit.html">en</a> ·
+    <a href="../zh-CN/build-audit.html">zh-CN</a> ·
+    <a href="../zh-TW/build-audit.html">zh-TW</a> ·
+    <strong>ja</strong> ·
+    <a href="../faq.html">faq</a> ·
+    <a href="../security.html">セキュリティ</a> ·
+    <a href="../index.html">↑ サイト</a>
+</div>
+
+<section class="hero">
+    <h1>ビルドツールチェーン監査</h1>
+    <p class="tagline">autotools ビルドチェーン、GitHub Actions CI、
+        ベンダーされたソースの来歴、インストール経路のリスクを
+        レビュー。何が固定済みで、何が署名済みで、何が未対応か
+        正直に書きます。</p>
+    <p class="meta">
+        <a href="#toolchain">ツールチェーンリスク</a> ·
+        <a href="#ci">CI リスク</a> ·
+        <a href="#provenance">ソース来歴</a> ·
+        <a href="#distribution">配布リスク</a> ·
+        <a href="#summary">まとめ</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR。</b>ビルドチェーンは概ね標準的な
+        <b>autotools + Alpine + GitHub Actions</b>。
+        実在するが軽減可能なリスクがあります：CI が Alpine を
+        <b>digest で固定していない</b>、サードパーティ actions を
+        <b>commit SHA で固定していない</b>、ビルドされた
+        バイナリが<b>未署名</b>（cosign / GPG / sigstore なし）、
+        リリースに <b>SBOM がない</b>。ベンダーされた C は
+        <b>バイト単位で</b>upstream
+        <code>jca02266/lha@86094cb</code> と一致、なので
+        ソース改竄は<em>upstream 側</em>の話。このページでは
+        各リスクを列挙し、現在の緩和策（または非対応）と
+        1 行でできる修正案を併記します。</p>
+</aside>
+
+<section id="toolchain">
+    <h2>1. ビルドツールチェーンリスク</h2>
+    <p>lha ソースは GNU autotools を使用。リリースバイナリは
+        <code>alpine:3.20</code> Docker コンテナ内でビルドされ
+        （ホストは GitHub Actions Linux runner）、その後 macOS /
+        Windows runner でパッケージ。ツールチェーン：
+        <code>autoconf 2.72</code>、<code>automake 1.16.5</code>、
+        <code>libtool 2.5.4</code>、<code>gcc 13.2.1</code>、
+        <code>musl 1.2.5</code>（監査時点の <code>alpine:3.20</code>）。</p>
+    <pre><code>bash scripts/build.sh
+  ( cd "$SRC" && autoreconf -is )          # m4 マクロ展開
+  ( cd "$BUILD_DIR" && "$SRC/configure" )  # 生成された shell スクリプト
+  ( cd "$BUILD_DIR" && make -j"$JOBS" )    # cc + ld</code></pre>
+    <p>この 3 ステップはそれぞれビルドホスト上で任意のコードを
+        実行します。以下、リスク別の監査。</p>
+
+    <h3>R1. <code>autoreconf -is</code> — M4 マクロ展開</h3>
+    <p><b>何をするか</b>：<code>configure.ac</code> を
+        autoconf + automake + libtool + autoheader + autopoint で
+        展開して <code>configure</code> を生成する。M4 はマクロ
+        言語で、shell を呼んだり、プログラムを走らせたり、
+        ファイルを読み込める。</p>
+    <p><b>リスク</b>：<code>upstream/lha/</code> の
+        <code>configure.ac</code> や <code>.m4</code> ファイルに
+        バックドアがあれば、ビルド時に任意のコマンドが走る。
+        ベンダーされたソースはバイト単位で upstream
+        <code>jca02266/lha@86094cb</code> と一致するため、これは
+        <em>upstream 信頼</em>の問題で、ljh-sh 特有ではない。
+        緩和は <a href="#provenance">§3</a> を参照。</p>
+    <p><b>現在の緩和</b>：lha 1.14i の M4 入力ファイルは小さく、
+        2003 年から実質的に変わっていない。<code>configure.ac</code>
+        全体を読み、不審な <code>AC_RUN_IFELSE</code> /
+        <code>AC_TRY_RUN</code> / <code>AC_LINK_IFELSE</code> 本体は
+        ない（<a href="security.html">5 軸ソース監査</a> の一部）。</p>
+
+    <h3>R2. 生成された <code>configure</code> スクリプト</h3>
+    <p><b>何をするか</b>：~10,000 行の shell でツールチェーンを
+        検出し、AC_TRY_RUN 試験（実 <code>fork</code> +
+        <code>exec</code> + <code>wait</code> で小さな試験
+        プログラム）を動かし、Makefile を出力する。</p>
+    <p><b>リスク</b>：侵害された autoconf は任意のコマンドを
+        走らせる <code>configure</code> を生成する可能性がある。
+        生成された <code>configure</code>（~10,000 行）は直接
+        監査しない。元になる <code>configure.ac</code>
+        （~300 行）にあるバックドアは見えるが、autoconf の
+        M4 マクロにあるバックドアは再生成まで隠れる。</p>
+    <p><b>現在の緩和</b>：<code>alpine:3.20</code>（イメージ）に
+        固定している。<strong>リスク</strong>：イメージは
+        <em>フローティングタグ</em>で digest ではない。Alpine 3.20
+        が強制リビルドされる（セキュリティ事故）と CI が静かに
+        取り込む。<strong>1 行修正</strong>：workflow で
+        <code>docker: image: alpine@sha256:&lt;digest&gt;</code>、
+        digest は既知良好な <code>docker pull alpine:3.20</code>
+        から取得。</p>
+
+    <h3>R3. <code>make</code> + <code>cc</code></h3>
+    <p><b>何をするか</b>：<code>gcc -g -O2 -DHAVE_CONFIG_H ...</code> で
+        C ソースをコンパイルし、リンクする。</p>
+    <p><b>リスク</b>：C ビルドの標準。<code>-g -O2</code> は安全；
+        ビルド時の懸念は Makefile が shell を呼ぶ箇所のみ。
+        生成された <code>Makefile</code> を shell injection パターン
+        （変数のクォート漏れ、glob のクォート漏れ等）で確認、
+        該当なし。</p>
+    <p><b>現在の緩和</b>：C は標準 autoconf 検出フラグでコンパイル。
+        LTO なし、PGO なし、サードパーティコンパイララッパなし。
+        ビルドは bit-for-bit 再現可能（別ホストで再実行、ビルド
+        タイムスタンプが <code>__TIME__</code> に焼かれる点を除き
+        一致——lha の <code>__TIME__</code> はバージョン文字列の
+        出力にのみ使用、ランタイム挙動に影響なし）。</p>
+
+    <h3>R4. libiconv / libz / libSystem 依存</h3>
+    <p>static-musl ビルドは C ライブラリのみリンク。macOS ビルドは
+        システム <code>libiconv</code> を使用（macOS では
+        <code>libSystem</code> に含まれる）。Linux gnu ビルドは
+        apt パッケージの <code>libz</code> + <code>libiconv</code> を
+        リンク。<b>なし</b>：<code>libcurl</code>、
+        <code>libssl</code>、<code>libxml2</code>、
+        <code>libsystemd</code>。</p>
+    <p><b>リスク</b>：低 — すべてパッケージマネージャ由来；唯一の
+        ソフトウェア定義入力は workflow で固定されたパッケージ名。</p>
+</section>
+
+<section id="ci">
+    <h2>2. CI リスク</h2>
+    <p>lha リリースパイプライン：</p>
+    <pre><code>on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4         # ❌ 未固定
+      - uses: msys2/setup-msys2@v2       # ❌ 未固定
+      - run: bash scripts/build.sh        # ✅ リポジトリ内
+      - run: docker run alpine:3.20 ...  # ❌ 未固定
+      - uses: softprops/action-gh-release@v2  # ❌ 未固定</code></pre>
+
+    <h3>R5. 未固定のサードパーティ actions</h3>
+    <p><b>リスク</b>：高。<code>actions/checkout@v4</code>、
+        <code>msys2/setup-msys2@v2</code>、
+        <code>softprops/action-gh-release@v2</code> — すべて
+        フローティングタグ。書き込み権限のある者（アカウント
+        乗っ取り含む）は CI 環境で任意のコードを送り込み、
+        <code>secrets.GITHUB_TOKEN</code> と release 書き込み権限を
+        得られる。</p>
+    <p><b>1 行修正</b>：各 <code>uses:</code> を commit SHA に
+        固定。GitHub の
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">セキュリティ
+        ハードニングガイド</a> も推奨。</p>
+    <p><b>現在の緩和</b>：なし。リスクは上流リポジトリの書き込み
+        権限者数（小）と、怪しいリリースに気付く確率（低 —
+        artifacts 変化に気付く必要あり）で抑止されているのみ。</p>
+
+    <h3>R6. 未固定の <code>alpine:3.20</code></h3>
+    <p><b>リスク</b>：中。上記と同じフローティングタグ。digest に
+        固定する。</p>
+
+    <h3>R7. CI runner の secrets / 書き込み権限</h3>
+    <p><b>リスク</b>：<code>ljh-sh/lha</code> への push 権限を持つ
+        者なら誰でも workflow を改変できる（メンテナの GitHub
+        身元で実行、<code>secrets.GITHUB_TOKEN</code> + release
+        書き込み権限付き）。</p>
+    <p><b>現在の緩和</b>：ブランチ保護ルール（PR review 必須）— 確認
+        済み。Release は <code>v*</code> tag push 時のみ — メンテナ
+        による署名タグ push が必要。PR 作成者は単独で release を
+        トリガできない。</p>
+    <p><b>1 行改善</b>：CODEOWNERS ファイルを追加し、workflow
+        改変は特定メンテナの review を必須にする。</p>
+</section>
+
+<section id="provenance">
+    <h2>3. ベンダーされたソースの来歴</h2>
+    <p><code>upstream/lha/</code> はバイト単位で
+        <a href="https://github.com/jca02266/lha/tree/86094cb">jca02266/lha@86094cb</a>
+        （LHa for UNIX 1.14i-ac20220213）と一致。Vendoring は
+        <code>git subtree add</code> で
+        <code>https://github.com/jca02266/lha.git master 86094cb</code>
+        から実施；subtree 履歴は <code>upstream/lha/.git</code>
+        と squash-merge コミット内に保存。</p>
+
+    <h3>R9. Subtree vendoring は再現可能</h3>
+    <p>ベンダーされたコミット（履歴の merge commit
+        <code>4ccece7...</code>）は正確な upstream コミットを参照。
+        いつでも検証可能：</p>
+    <pre><code>git -C upstream/lha log -1 --format='%H %s'
+git ls-remote https://github.com/jca02266/lha.git 86094cb</code></pre>
+    <p>SHA が一致すれば、ベンダーされたソースは upstream の
+        bit-for-bit。CI に毎回 release 時にこれを実行するステップを
+        追加すべき（release job に 1 行）。</p>
+
+    <h3>R10. ベンダー信頼点は upstream</h3>
+    <p><code>jca02266/lha</code> の履歴が後に改変されても
+        （force-push、rebase、削除）、ベンダーされたコピーは
+        <em>変わらない</em>— スナップショットがある。ただし
+        <em>我々</em>のリポジトリが release 前に侵害されると、
+        攻撃者は upstream スナップショットと<em>同じに見え</em>る
+        バックドア版でベンダーソースを差し替え可能。</p>
+    <p><b>1 行修正</b>：CI で checkout 後に
+        <code>upstream/lha/.git</code> が期待 <code>86094cb</code> SHA
+        に一致するか検証。不一致ならビルド失敗。これが
+        「我々の lha は本当に upstream 由来」チェック。</p>
+</section>
+
+<section id="distribution">
+    <h2>4. 配布 / インストール経路リスク</h2>
+    <p>ユーザは以下のいずれかでバイナリを取得：</p>
+    <ul>
+        <li><code>x eget use lha</code> — <code>ljh-sh/lha</code>
+            の <code>releases/latest</code> からダウンロード。</li>
+        <li><code>x i lha</code> — x-cmd-install の
+            <code>src/common/lha.yml</code> 内の
+            <code>brew install lha</code> / <code>apt install
+            lhasa</code> コマンドへルーティング。</li>
+        <li>GitHub Releases ページから直接ダウンロード。</li>
+    </ul>
+
+    <h3>R11. Release 未署名</h3>
+    <p><b>リスク</b>：中。Release artifacts（tarball、zip）は何も
+        署名していない。GitHub の commit 署名は commit を保護するが
+        release artifact は保護しない。GPG 署名なし、cosign 署名
+        なし、sigstore envelope なし。</p>
+    <p><b>1 行修正</b>：release workflow に
+        <code>cosign sign-blob</code> ステップ追加。GitHub が
+        OIDC ベース keyless 署名を提供（<a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign
+        sign-blob</code></a>）。</p>
+
+    <h3>R12. <code>x eget use lha</code> は TLS 以外で checksum を検証しない</h3>
+    <p>ユーザは GitHub への TLS 接続を信頼する。業界標準
+        （TUF、in-toto、sigstore はオプションだがクライアント側
+        セットアップが必要）。単一バイナリ配布では、署名 + 検証
+        コマンドの文書化が実用的な底。</p>
+
+    <h3>R13. SBOM なし</h3>
+    <p><b>リスク</b>：小さい静的バイナリには低。静的バイナリの唯一の
+        「コンポーネント」は libc（macOS では libSystem、OS の一部）。
+        lha 自体のみ。SBOM 価値は限定的。</p>
+</section>
+
+<section id="summary">
+    <h2>5. まとめ — 実際にやる変更</h2>
+    <p>impact-to-effort 比率順（高い順）：</p>
+    <table>
+    <thead><tr><th>#</th><th>変更</th>
+        <th>工数</th><th>低減するリスク</th></tr></thead>
+    <tbody>
+    <tr><td>R9</td>
+        <td>CI で subtree SHA 検証</td>
+        <td>5 分</td>
+        <td>「我々の lha は upstream 由来ではない」攻撃面を捕捉</td></tr>
+    <tr><td>R5</td>
+        <td>各 <code>uses:</code> を commit SHA に固定</td>
+        <td>15 分</td>
+        <td>action タグ移動攻撃面を排除</td></tr>
+    <tr><td>R6</td>
+        <td><code>alpine:3.20</code> を digest に固定</td>
+        <td>5 分</td>
+        <td>イメージ再ビルド攻撃面を排除</td></tr>
+    <tr><td>R11</td>
+        <td>cosign で各 release artifact 署名</td>
+        <td>30 分</td>
+        <td>配布チャネルの完全性底</td></tr>
+    <tr><td>R7</td>
+        <td>CODEOWNERS for <code>.github/</code></td>
+        <td>10 分</td>
+        <td>CI 挙動を改変できる人を限定</td></tr>
+    <tr><td>R13</td>
+        <td>SBOM を release asset に</td>
+        <td>30 分</td>
+        <td>コンプライアンス</td></tr>
+    </tbody>
+    </table>
+    <p>合計 ~1.5 時間の作業で業界標準 → 十分ハードニングへ。</p>
+</section>
+
+<footer>
+    <p>
+        本監査は当時の ljh-sh/lha ビルドツールチェーンの
+        <code>main</code> で実施。出典：<a href="security.html">5 軸
+        ソース監査</a>（M4 / <code>configure.ac</code> レビュー）、
+        GitHub の
+        <a href="https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions">actions
+        セキュリティガイド</a>（action 固定ベストプラクティス）、
+        <a href="https://docs.sigstore.dev/">sigstore ドキュメント</a>
+        （cosign keyless 署名）。
+    </p>
+</footer>
+
+</main>
+
+  <script src="../lang-router.js" defer></script>
+
+</body>
+</html>
