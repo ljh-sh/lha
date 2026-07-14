@@ -186,14 +186,29 @@
     function init() {
         var desired = getDesired();
         var current = getCurrent();
-        // If the URL is the legacy top-level path (e.g. /lha/security.html)
-        // and the user wants a non-en language, redirect.
+        // Always redirect off the legacy top-level pages (no /<lang>/
+        // in URL). The legacy pages have relative body links
+        // ("../security.html", "../index.html") which after our
+        // ?lang= rewrite still resolve to the legacy top-level
+        // pages, so the user is "stuck" — see commit message of
+        // this fix. The per-language pages (/lha/<lang>/<file>) have
+        // the correct relative link targets, so the user must be
+        // on a per-language page for navigation to work.
+        if (!/\/(en|zh-CN|zh-TW|ja)\//.test(window.location.pathname)) {
+            var target = toLang(window.location.pathname, desired);
+            var u = new URL(window.location.href);
+            u.pathname = target;
+            u.searchParams.set(URL_PARAM, desired);
+            window.location.replace(u.pathname + (u.search ? u.search : '') + u.hash);
+            return;
+        }
+        // If we're on a per-language page but the desired language
+        // is different, also redirect.
         if (desired !== current) {
             var target = toLang(window.location.pathname, desired);
             var u = new URL(window.location.href);
             u.pathname = target;
             u.searchParams.set(URL_PARAM, desired);
-            // Preserve any other query params (none today)
             window.location.replace(u.pathname + (u.search ? u.search : '') + u.hash);
             return;
         }
