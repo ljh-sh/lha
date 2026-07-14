@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — FAQ（性能、格式、lha-rs、未来格式）</title>
+<meta name="description" content="汇总 FAQ：lha 解压性能、tANS / zstd 竞争定位、相对 bzip2/zip/7z 的格式特性、lha-rs 重写问题，以及新格式（.lh5b- / .lh8- / .lhi-）应该放在哪里。">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳到内容</a>
+
+<div class="lang-switch">
+    <a href="../faq.html">en</a> ·
+    <strong>zh-CN</strong> ·
+    <a href="../zh-TW/faq.html">zh-TW</a> ·
+    <a href="../ja/faq.html">ja</a> ·
+    <a href="../perf.html">性能</a> ·
+    <a href="../security.html">安全</a> ·
+    <a href="../index.html">↑ 站点</a>
+</div>
+
+<section class="hero">
+    <h1>FAQ</h1>
+    <p class="tagline">性能、格式、未来格式，以及 lha-rs 问题。
+        这是一份对静态二进制分发背后分析的汇总记录。</p>
+    <p class="meta">
+        <a href="#decompress-slow">解压速度</a> ·
+        <a href="#tans">tANS 竞争区间</a> ·
+        <a href="#zstd-1">zstd -1 是「最佳」吗</a> ·
+        <a href="#lha-rs">lha-rs</a> ·
+        <a href="#lha-vs-bz">lha vs bzip2 / 7z</a> ·
+        <a href="#new-formats">新格式放哪里</a>
+    </p>
+</section>
+
+<section id="decompress-slow">
+    <h2>为什么 lha 的解压比 deflate / zstd / lz4 慢这么多？</h2>
+
+    <p><b>简短回答</b>：算法本质是位串行的，源码里完全没有 SIMD。
+        通过非 SIMD 的算法优化可以获得 3-7× 加速；要追上 zstd -1
+        是多年的工程。</p>
+
+    <h3>源码里的两条热点路径</h3>
+    <p>解码 LZHUF 意味着：</p>
+    <ul>
+        <li>读 N 位 → 走一棵二叉树（每条分支消耗一位）→
+            输出一个符号。（<code>src/huf.c:decode_c_dyn</code>、
+            <code>src/huf.c:decode_p_dyn</code>）</li>
+        <li>如果符号是反向引用，从滑窗 D 字节之前复制 L 字节。
+            （<code>src/slide.c</code> 手写的 <code>for</code> 循环，
+            一字节一迭代。）</li>
+    </ul>
+
+    <h3>为什么这从根本上就慢</h3>
+    <ul>
+        <li><b>静态 Huffman</b> 意味着位流是一位一位解码的。
+            解码器无法在不查表的情况下"预看"超过 1-2 位。</li>
+        <li><b>完全没有 SIMD</b>：
+            <code>grep -nE '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' src/*.c</code>
+            返回零命中。vendored 1.14i 代码是 1995-2003 年纯 ANSI C，
+            无向量化。</li>
+        <li><b>反向引用复制是逐字节</b> 写在
+            <code>src/slide.c</code>。用
+            <code>memcpy(dst, src, len)</code> 在现代 glibc（内部
+            用 SSE2/AVX2）上已经快 2-4 倍。</li>
+    </ul>
+
+    <h3>不改磁盘格式就能做的优化</h3>
+    <table>
+    <thead><tr><th>优化</th><th>改在哪里</th><th>解压收益</th></tr></thead>
+    <tbody>
+    <tr><td>预计算的符号查找表（zlib-style inflate）</td>
+        <td>替换 <code>src/huf.c</code> 里的逐位树走</td>
+        <td><b>3-5×</b>（位循环部分）</td></tr>
+    <tr><td><code>memcpy(dst, src, len)</code> 用于 LZ77 反向引用复制</td>
+        <td>替换 <code>src/slide.c</code> 的逐字节循环</td>
+        <td><b>2-4×</b>（复制部分）</td></tr>
+    <tr><td>去分支的 16 位表查找</td>
+        <td>同 #1，更激进</td>
+        <td><b>5-7×</b></td></tr>
+    <tr><td>两阶段流水线（读 buffer + 分块解码）</td>
+        <td>重接 <code>src/dhuf.c</code> 和 <code>src/slide.c</code></td>
+        <td><b>1.5-2×</b></td></tr>
+    <tr><td>缓存热反向引用距离（top-3 MRU）</td>
+        <td>新加在 <code>src/slide.c</code></td>
+        <td><b>1.2-1.5×</b></td></tr>
+    </tbody>
+    </table>
+    <p>合计：<b>3-7× 解压加速</b>，把 lha -lh5- 从 ~45 MB/s 提到
+        ~150-300 MB/s（kenlm 语料）——和 <code>deflate</code>
+        level 1-3（同语料约 300-500 MB/s）有竞争力，但
+        "同类最强"还差得远。</p>
+
+    <h3>硬上限：tANS 能买的和不买的</h3>
+    <p>要追到 zstd -1（~2 GB/s），需要根本不同的熵编码器
+        （tANS/FSE）和更快的 LZ77。也就是改磁盘格式——见下面
+        <a href="#new-formats">"新格式放哪里？"</a>。
+        今天的 lha -lh5- C 解码器是上限；LZHUF 内部没有任何
+        算法能突破 ~300 MB/s 解压。</p>
+
+    <h3>来源</h3>
+    <p>数据来自 5 次跑、kenlm 上游源码（1.83 MiB / 304 文件），
+        Apple M 系列，原生 lha 编译。完整表格见
+        <a href="perf.html">性能页</a>。5 维源码审计见
+        <a href="security.html">安全页</a>，确认位循环和逐字节
+        复制是仅有的两条解压热点路径。</p>
+</section>
+
+<section id="tans">
+    <h2>tANS 能让 lha 和现代压缩器有竞争力吗？</h2>
+
+    <p><b>简短回答</b>：能。配上 tANS，lha 进入和
+        <code>deflate</code> / <code>brotli</code> 同一档；
+        但到不了 <code>zstd -1+</code> 的档次（多年优化差距），
+        也到不了 <code>lz4</code> / <code>snappy</code> 的档次
+        （根本是不同架构）。</p>
+
+    <h3>tANS 在每个对手面前的定位</h3>
+    <table>
+    <thead><tr><th>对手</th><th>解压速度</th>
+        <th>tANS 为什么有 / 没有用</th></tr></thead>
+    <tbody>
+    <tr><td>zstd -1</td><td>~2 GB/s</td>
+        <td>Yann Collet 在 FSE/tANS 上调优 8+ 年。"第一版" tANS
+            实现能到 ~1-1.5 GB/s，比 zstd -1 慢 30-50%。
+            多年迭代才能追上。</td></tr>
+    <tr><td>zstd -3+</td><td>~1 GB/s</td>
+        <td>差距更大；optimal parser 是难点。</td></tr>
+    <tr><td>deflate -1 ~ -3</td><td>500-800 MB/s</td>
+        <td><b>同一档。</b>tANS 能到 ~500-800 MB/s，deflate
+            也能。差距在小的常数因子内。</td></tr>
+    <tr><td>brotli -1</td><td>300-500 MB/s</td>
+        <td><b>略领先</b>——brotli 用静态 Huffman，新 tANS
+            实现能快一点点（同样压缩率下）。</td></tr>
+    <tr><td>lz4 / snappy / LZO</td><td>3-5 GB/s</td>
+        <td><b>永远追不上。</b>这些没有熵编码器——它们把
+            LZ77 匹配存成 4 字节 token，解压 ~1 byte/cycle。
+            LHA-with-tANS 多了 lz4 没有的那层，永远追不到
+            那个速度档位（架构差距）。</td></tr>
+    </tbody>
+    </table>
+
+    <h3>硬上限</h3>
+    <p>解码器被内存带宽 + 分支预测失误 + 缓存未命中三者
+        限制。tANS 把分支预测失误降到最低（每个符号一次分支）。
+        lz4 把缓存未命中降到最低（16 字节一块的 literal 复制）。
+        现代 CPU 跑最简单的解码器能到 ~1 byte/cycle；tANS 大约
+        1-2；lz4 大约 1。两种架构<em>交换</em>这两个瓶颈，
+        彼此从外部都压不死对方。</p>
+
+    <h3>LHA 的实际竞争定位</h3>
+    <p>加 tANS 给 lha 的是"和 deflate / brotli 同档"，不是
+        "打败 zstd -1+"，更不是"打败 lz4"。LHA 在 2026 年
+        的真正价值<em>不是速度</em>——而是
+        <b>35 年格式稳定性</b> + <b>单文件零依赖静态二进制</b>。
+        速度是那个承诺的代价。问题变成：我们是加 tANS 作为
+        <b>新格式</b><code>.lh8-</code> 给追求速度的用户，
+        同时让 .lh5- 作为只读稳定兼容目标？见
+        <a href="#new-formats">下一节</a>。</p>
+</section>
+
+<section id="zstd-1">
+    <h2>zstd -1 是"最佳" zstd 级别吗？</h2>
+
+    <p><b>简短回答</b>：对，zstd -1 是 zstd 里速度最快的一档
+        （压缩率最低、速度最高）。但"最佳默认"是 <code>-3</code>，
+        不是 -1。</p>
+
+    <h3>zstd 级别表</h3>
+    <table>
+    <thead><tr><th>级别</th><th>角色</th>
+        <th>压缩率 vs -3</th><th>编码速度 vs -3</th></tr></thead>
+    <tbody>
+    <tr><td>-1</td><td>最快</td>
+            <td>~5-10 % 差</td><td>~2-3× 快</td></tr>
+    <tr><td>-3</td><td><b>默认</b>——速度/压缩率甜点</td>
+            <td>1.0×</td><td>1.0×</td></tr>
+    <tr><td>-6</td><td>平衡</td>
+            <td>~5-8 % 好</td><td>略慢</td></tr>
+    <tr><td>-10</td><td>偏好压缩</td>
+            <td>~10-15 % 好</td><td>3-5× 慢</td></tr>
+    <tr><td>-15</td><td>高压缩</td>
+            <td>~20-25 % 好</td><td>8-10× 慢</td></tr>
+    <tr><td>-22</td><td>最大</td>
+            <td>~30-50 % 好</td><td>30-50× 慢</td></tr>
+    </tbody>
+    </table>
+
+    <h3>为什么 -3 才是默认</h3>
+    <p>速度/压缩率曲线<em>不是</em>线性的：</p>
+    <ul>
+        <li><b>-1 到 -3</b>：时间轴上很平，压缩率有真收益。升到 -3
+            是 no-brainer。</li>
+        <li><b>-3 到 -10</b>：大致线性交换。</li>
+        <li><b>-10 到 -22</b>：压缩率轴上很平，时间成本继续大。
+            压缩率收益递减。</li>
+    </ul>
+    <p>所以 zstd 作者（Yann Collet）选 -3 作默认：它在曲线的
+        肩上。-1 大多数场景下压缩率损失太大；-10 花时间多但
+        收益少。</p>
+
+    <h3>zstd -1 不是"全场最快解码器"</h3>
+    <p>zstd -1 是最快<em>zstd</em>，但：</p>
+    <table>
+    <thead><tr><th>压缩器</th><th>解压速度</th>
+        <th>有熵编码？</th></tr></thead>
+    <tbody>
+    <tr><td><b>lz4</b></td><td>~3-4 GB/s</td><td>无</td></tr>
+    <tr><td><b>snappy</b></td><td>~3-5 GB/s</td><td>无</td></tr>
+    <tr><td><b>zstd -1</b></td><td>~1.5-2 GB/s</td><td>是（FSE / tANS）</td></tr>
+    <tr><td><b>zstd -3</b></td><td>~1 GB/s</td><td>是</td></tr>
+    <tr><td><b>brotli -1</b></td><td>~300-500 MB/s</td><td>是（静态 Huffman）</td></tr>
+    <tr><td><b>deflate -1</b></td><td>~500-800 MB/s</td><td>是（动态 Huffman）</td></tr>
+    <tr><td><b>lha -lh5-（当前）</b></td><td>~45 MB/s</td><td>是（静态 Huffman）</td></tr>
+    </tbody>
+    </table>
+    <p>lz4 / snappy 比 zstd -1 还<em>快 1.5-2×</em>，因为
+        <em>它们根本没有熵编码器</em>。所以"最快解码器"是
+        双轨赛跑；lz4 赢无熵轨；zstd -1 赢有熵轨。</p>
+</section>
+
+<section id="lha-vs-bz">
+    <h2>LHA 相对 bzip2 / zip / 7z 的独有特性是什么？</h2>
+
+    <p><b>简短回答</b>：lha 的"特性"大多数<em>不是</em>特性——
+        是换 35 年稳定格式的交换。但 lha 有几个真独有的：
+        每文件独立压缩、stdio 流友好、可流式构建目录。</p>
+
+    <h3>LHA <b>没有</b>的</h3>
+    <table>
+    <thead><tr><th>特性</th><th>bzip2</th><th>zip</th><th>7z</th><th>lha</th></tr></thead>
+    <tbody>
+    <tr><td>块内随机访问（seek 到 100 KB 解 1 KB）</td>
+        <td>✅ 100-900 KB 块</td>
+        <td>⚠️ 仅按文件跳</td>
+        <td>✅ 块</td>
+        <td>❌（流式）</td></tr>
+    <tr><td>全局索引</td>
+        <td>❌</td>
+        <td>✅ 中央目录在末尾</td>
+        <td>❌</td>
+        <td>❌（但可流式构建）</td></tr>
+    <tr><td>稀疏文件 / 硬链接 / ACL / xattr</td>
+        <td>❌</td>
+        <td>部分</td>
+        <td>✅</td>
+        <td>❌</td></tr>
+    <tr><td>强校验和（SHA-256）</td>
+        <td>❌（CRC32）</td>
+        <td>❌</td>
+        <td>✅</td>
+        <td>❌（CRC32）</td></tr>
+    <tr><td>压缩字典 / pretrain</td>
+        <td>✅</td>
+        <td>❌</td>
+        <td>✅</td>
+        <td>❌</td></tr>
+    </tbody>
+    </table>
+    <p><b>LHA 是流式（不是块）归档器</b>——和 zip / gzip / tar 同一
+        形态，不是 bzip2 / 7z 那一档。所以 bzip2 的"seek 到 100 MB
+        处只解 1 KB"在 lha -lh5- 上结构上就不可能。</p>
+
+    <h3>LHA <b>有</b>的（不寻常的）</h3>
+    <ul>
+        <li><b>35 年格式稳定性。</b>1990 年写的文件今天能解。
+            zip 36+ 年、tar 45+、bzip2 28、7z 25。lha
+            不是最长但在前档。</li>
+        <li><b>可流式构建目录。</b>LHA header 是固定大小（每文件
+            ~35 B）。可以一次流式读 lha 归档，内存里建
+            "文件 N 在偏移 O、大小 S、mtime M"的索引，不解压任何
+            文件。zip 做不到（中央目录在末尾）。</li>
+        <li><b>每文件独立压缩。</b>每条 entry 的压缩方法在它自己的
+            header 里。文件 1 可以是 -lh0-（存），文件 2 是
+            -lh5-，文件 3 又 -lh0-。没有"所有文件共享一个字典"
+            的硬约束。</li>
+        <li><b>stdio 原生。</b>
+            <code>lha c dir/ &gt; archive.lzh</code> 和
+            <code>lha xq archive.lzh &lt; /dev/tty</code> 直接
+            跑。zip / 7z / tar 都需要临时文件输出到 stdout。</li>
+        <li><b>极小的解压代码。</b>LZHUF 解码器 ~1,500 行 C——比
+            zstd 的 ~50,000 或 7z 的 ~30,000 小得多。易嵌入、易
+            审计（5 维刚刚做完）。</li>
+        <li><b>流里没有熵表。</b>静态 Huffman 意味着表在解码器里、
+            不在数据里。50 字节的文件在 lha 里只有 35 字节
+            header + 50 字节 body，没有每块 overhead。deflate 每
+            块有 ~20 字节表。</li>
+        <li><b>日文文件名编码</b>（Shift-JIS、EUC-JP）原生支持
+            1990 年代日本 BBS / 2ch 老归档。</li>
+    </ul>
+
+    <h3>战略意义</h3>
+    <p>LHA 在 2026 年的价值是<b>格式稳定性 + 零依赖 + 小体积 +
+        35 年可移植</b>，不是"功能丰富"。要 bzip2 风格的功能
+        （随机访问、索引、强校验）就加<em>新格式</em>
+        <code>.lh5b-</code>（块）、<code>.lh8-</code>（tANS）、
+        <code>.lhi-</code>（索引）——不是 Rust 重写 LHA。详见
+        <a href="#new-formats">下个问题</a>。</p>
+</section>
+
+<section id="lha-rs">
+    <h2>Rust 重写能帮 LHA 吗？（lha-rs 问题）</h2>
+
+    <p><b>简短回答</b>：<b>不能</b>。lha-rs 不值得作为 1:1 替换
+        C 版的 Rust 移植。诚实的答案：Rust 重写的标准理由对
+        lha 基本不适用。</p>
+
+    <h3>每个标准"用 Rust 重写"的理由，应用到 lha</h3>
+    <table>
+    <thead><tr><th>"理由"</th><th>对 lha 的现实</th></tr></thead>
+    <tbody>
+    <tr><td>内存安全（Rust 消除 strcpy/sprintf 风险）</td>
+        <td>5 维审计刚做完。8 个 strcpy 全部带长度检查；
+            0 个 sprintf / gets / scanf。脆弱类不存在。整体重写
+            来去掉一个不在的漏洞类别，成本/收益差。</td></tr>
+    <tr><td>cargo-fuzz / cargo test 基础设施</td>
+        <td>libFuzzer 不只是 Rust 用，给 C / C++ 项目也能挂。
+            oss-fuzz 给 C 项目免费 hosting。给 lha 加 libFuzzer
+            是 1-2 周工作，不是单独开项目。</td></tr>
+    <tr><td>现代错误处理（Result&lt;T, E&gt;）</td>
+        <td>C 用 tagged-union 一样能返回。真正的活是错误<em>词汇</em>，
+            不是语言。1 周改 lha 的错误路径，不是 1 年。</td></tr>
+    <tr><td>现代 CLI（clap / argh）</td>
+        <td>lha 的 CLI 1990 年就稳定。重构是破坏性变更，不是
+            改进。CLI 不是 lha 的痛点。</td></tr>
+    <tr><td>可插拔压缩 crate（flate2、zstd-rs、lz4_flex）</td>
+        <td>那是给新项目用的。不需要在 lha-rs 里——任何写新
+            Rust 工具的人已经在用了。</td></tr>
+    <tr><td>算法优化载体</td>
+            <td>层不对。预计算表 + memcpy 两招是语言无关的。
+                C 里写——进现有 CI 矩阵，不需要新项目。</td></tr>
+    <tr><td>新格式实验（tANS 等）</td>
+            <td>这是新格式的问题，不是 lha-rs 的问题。新格式
+                住在 lha/ 的 <code>src/lh5b/</code>、
+                <code>src/lh8/</code>。不是单独 repo。</td></tr>
+    </tbody>
+    </table>
+
+    <h3>什么时候 Rust 重写才真的对</h3>
+    <p>必须满足以下之一：</p>
+    <ul>
+        <li>C 维护者要退了，下一代维护者只会 Rust——这是退出
+            策略。</li>
+        <li>新格式是<em>Rust-first</em>设计（用 async、
+            <code>Send</code>、<code>rayon</code>、std SIMD）。</li>
+        <li>特定用户需求强制（比如"必须在 WebAssembly 里跑"——Rust
+            的 <code>wasm32-unknown-unknown</code> 是唯一靠谱路径）。</li>
+    </ul>
+    <p>今天对 lha 这三条都不命中。</p>
+
+    <h3>正确的下一步</h3>
+    <ol>
+        <li><b>留在 lha（C）——维护和审计。</b>5 维安全审计已做；
+            libFuzzer 集成 1-2 周；oss-fuzz 1-2 小时。完成。</li>
+        <li><b>在 C 里加新格式（作为子目录）</b>：
+            <code>src/lh5b/</code>（块格式带随机读）、
+            <code>src/lh8/</code>（tANS）、<code>src/lhi/</code>（索引
+            文件）。C 实现直接进现有 CI 矩阵；没新 repo、没新
+            release 节奏。</li>
+        <li><b>写格式规范</b>于 <code>docs/lzh-format.md</code>，
+            任何未来实现（Rust、Python、Go）都有单一事实源。</li>
+        <li><b>如果新格式被证明有用，</b><em>然后</em>单独开
+            <code>ljh-sh/lha-spec</code>（或类似）放多种参考实现。
+            <em>不是</em>"重写" repo——是"多实现"测试床。</li>
+    </ol>
+    <p><b>lha-rs 不在这个清单上。</b>6-12 个月重写一个 13,400 行
+        C 项目，安全画像已经好，用一个不增加价值的语言——这
+        不划算。保留 C、做小的增量、必要时用 Rust 做新格式——这就是
+        正确路径。</p>
+</section>
+
+<section id="new-formats">
+    <h2>新格式（.lh5b- / .lh8- / .lhi-）放哪里？</h2>
+
+    <p><b>简短回答</b>：在现有的 <code>ljh-sh/lha</code> 仓库里，
+        不是新仓库。新格式是对 lha 家族的<em>补充</em>，不是
+        替代。</p>
+
+    <h3>提议的新格式</h3>
+    <table>
+    <thead><tr><th>后缀</th><th>后端</th>
+        <th>和 .lh5- 兼容</th>
+        <th>加了啥</th></tr></thead>
+    <tbody>
+    <tr><td><code>.lh5-</code>（当前）</td><td>LZHUF + 逐字节复制</td>
+        <td>—（基准）</td>
+            <td>35 年稳定格式；体积小；零依赖</td></tr>
+    <tr><td><code>.lh5b-</code></td><td>同 .lh5-，但 256 KB 块</td>
+        <td>老 .lh5- 读端能解；新读端获块内随机读</td>
+            <td>单文件内随机访问；部分解（接近 bzip2 行为）</td></tr>
+    <tr><td><code>.lh8-</code></td><td>tANS（FSE）+ 更快的 LZ77</td>
+        <td>新格式，老 .lh5- 解码器读不了</td>
+            <td>解压速度和 deflate -1 同一档；多数语料上压缩率
+                优于 .lh5-</td></tr>
+    <tr><td><code>.lhi-</code></td><td>索引文件（独立于归档）</td>
+        <td>和任何 .lh5-（或 .lh8-）归档配合</td>
+            <td>可流式构建的目录；让
+                <code>lhacat archive.lzh</code> 列出所有文件而
+                不读任何 body</td></tr>
+    </tbody>
+    </table>
+
+    <h3>每个放哪里</h3>
+    <ul>
+        <li><b><code>src/lh5b/</code></b> — 块格式。C。<code>ljh-sh/lha</code>
+            的子目录。4-6 周。</li>
+        <li><b><code>src/lh8/</code></b> — tANS 后端。C 或 Rust
+            （tANS 是新格式，所以<em>如果</em>Rust 是对的选择，
+            这里是对的地方）。12-18 月。很可能<em>仍</em>用 C
+            保持一致。</li>
+        <li><b><code>src/lhi/</code></b> — 索引格式。C。1-2 周。</li>
+        <li><b><code>docs/lzh-format.md</code></b> — 新格式都引用的
+            格式规范。2-3 周。</li>
+    </ul>
+
+    <h3>一个二进制处理所有这些</h3>
+    <p>在现有 repo 做的杀手特性：单个 <code>ljh-sh/lha</code>
+        二进制读<em>所有</em>这些格式：</p>
+    <pre><code>$ lha l archive.lh5-          # 基准
+$ lha l archive.lh5b         # 块内随机读
+$ lha l archive.lh8-          # tANS，更快解压
+$ lha l --index archive.lhi   # 流式目录
+$ lha x archive.lh8-          # 写新 tANS 归档</code></pre>
+    <p>单静态二进制，~250 KB，零依赖。同一
+        <code>x i lha</code> / <code>x eget use lha</code>
+        安装路径。35 年稳定读路径 + 现代 tANS 写路径 + 块内
+        随机读。<strong>这是 lha 在 2026 年的竞争定位：</strong>
+        一个做没有任何其他归档器能做到的事情的二进制，
+        重量 250 KB。</p>
+</section>
+
+<footer>
+    <p>
+        这个页面的所有问题都能追溯到
+        <a href="perf.html">性能页</a>（5 次跑、kenlm_src
+        1.83 MiB / 304 文件、Apple M 系列、原生 lha 编译）和
+        <a href="security.html">安全页</a>（5 维审计
+        <code>upstream/lha/</code> @ vendored commit
+        <code>jca02266/lha@86094cb</code>）的源数据。数字会因
+        主机而异，但排序和结论稳定。
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>
