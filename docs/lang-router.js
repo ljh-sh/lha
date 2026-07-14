@@ -7,33 +7,41 @@
 // ?lang=X so subsequent navigation stays in the chosen language.
 // Updates the lang-switcher's aria-current.
 //
-// Expected file layout:
-//   /lha/{en,zh-CN,zh-TW,ja}/index.html
-//   /lha/{en,zh-CN,zh-TW,ja}/{security,perf,...}.html
-// Plus a flat /lha/{index,security,perf,...}.html that's just an
-// en alias (legacy URLs from before the per-lang split).
+// Site layout (no Jekyll — .html files served raw):
+//   /lha/index.html
+//   /lha/security.html
+//   /lha/perf.html
+//   /lha/{en,zh-CN,zh-TW,ja}/<file>.html
+//
+// Behavior:
+//   1. ?lang=X in URL → set localStorage, return X (strongest signal)
+//   2. localStorage['lha-lang'] → return that
+//   3. navigator.language → match prefix
+//   4. default 'en'
+//   If the current URL is /lha/<file>.html (no /<lang>/), and
+//   desired isn't 'en', redirect to /lha/<desired>/<file>.html?lang=<desired>.
 (function () {
     'use strict';
 
     var SUPPORTED = ['en', 'zh-CN', 'zh-TW', 'ja'];
-    var LANG_DISPLAY = { 'en': 'en', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', 'ja': 'ja' };
     var STORAGE_KEY = 'lha-lang';
     var URL_PARAM = 'lang';
 
-    // 1. Determine desired language
+    // 1. Resolve desired language.
     function getDesired() {
         var url = new URL(window.location.href);
         var fromUrl = url.searchParams.get(URL_PARAM);
         if (fromUrl && SUPPORTED.indexOf(fromUrl) !== -1) {
-            localStorage.setItem(STORAGE_KEY, fromUrl);
+            try { localStorage.setItem(STORAGE_KEY, fromUrl); } catch (e) {}
             return fromUrl;
         }
-        var fromStorage = localStorage.getItem(STORAGE_KEY);
+        var fromStorage = null;
+        try { fromStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
         if (fromStorage && SUPPORTED.indexOf(fromStorage) !== -1) return fromStorage;
-        var browserLangs = (navigator.languages || [navigator.language || 'en'])
+        var bls = (navigator.languages || [navigator.language || 'en'])
             .map(function (l) { return l.toLowerCase(); });
-        for (var i = 0; i < browserLangs.length; i++) {
-            var bl = browserLangs[i];
+        for (var i = 0; i < bls.length; i++) {
+            var bl = bls[i];
             if (bl.indexOf('zh-tw') === 0 || bl.indexOf('zh-hk') === 0) return 'zh-TW';
             if (bl.indexOf('zh') === 0) return 'zh-CN';
             if (bl.indexOf('ja') === 0) return 'ja';
@@ -42,142 +50,114 @@
         return 'en';
     }
 
-    // 2. Detect current language from URL path
+    // 2. Detect current language from URL path.
     function getCurrent() {
         var m = window.location.pathname.match(/\/(en|zh-CN|zh-TW|ja)\//);
         return m ? m[1] : 'en';
     }
 
-    // 3. Resolve a path to a particular language.
-    //    - /lha/en/security.html         → /lha/zh-CN/security.html
-    //    - /lha/security.html (legacy)   → /lha/zh-CN/security.html
-    //    - /lha/                          → /lha/zh-CN/index.html
+    // 3. Compute target path: same file, in the chosen language's dir.
     function toLang(pathname, lang) {
-        // Normalize: split into segments, drop the existing lang dir if any.
         var parts = pathname.split('/').filter(Boolean);
-        var dropIdx = (parts[0] === 'lha') ? 1 : 0;
-        if (parts[dropIdx] && SUPPORTED.indexOf(parts[dropIdx]) !== -1) dropIdx++;
-        var rest = parts.slice(dropIdx).join('/');
-        // Determine the current file
-        var file;
-        if (rest === '') {
-            file = 'index.html';
-        } else if (/\.html$/.test(rest)) {
-            file = rest;
-        } else {
-            file = rest + (/\/$/.test(pathname) ? 'index.html' : '/index.html');
-        }
-        // Build new path
+        var drop = (parts[0] === 'lha') ? 1 : 0;
+        if (parts[drop] && SUPPORTED.indexOf(parts[drop]) !== -1) drop++;
+        var rest = parts.slice(drop).join('/');
+        var file = (rest === '' || !/\.html?$/.test(rest))
+            ? ((rest === '' || /\/$/.test(pathname)) ? 'index.html' : 'index.html')
+            : rest;
         if (lang === 'en') return '/lha/' + file;
         return '/lha/' + lang + '/' + file;
     }
 
-    // 4. Append or replace the ?lang= param on a URL
+    // 4. Append or update the ?lang= param on an href (string-level
+    //    operation so relative paths resolve correctly).
     function withLang(href, lang) {
-        try {
-            var u = new URL(href, window.location.origin);
-            if (u.origin === window.location.origin) {
-                u.searchParams.set(URL_PARAM, lang);
-                return u.pathname + (u.search ? u.search : '') + u.hash;
-            }
-        } catch (e) {}
-        return href;
+        // If it's an absolute URL, validate same-origin.
+        var isExternal = /^[a-z]+:\/\//i.test(href) || href.indexOf('//') === 0;
+        if (isExternal) {
+            try {
+                var u = new URL(href);
+                if (u.origin !== window.location.origin) return href;
+            } catch (e) { return href; }
+        }
+        if (href.indexOf('?lang=') !== -1 || /[?&]lang=[^&]*/.test(href)) {
+            return href.replace(/([?&])lang=[^&#]*/, '$1lang=' + lang);
+        }
+        if (href.indexOf('?') === -1) {
+            return href + '?lang=' + lang;
+        }
+        return href + '&lang=' + lang;
     }
 
-    // 5. Decide if `href` is an internal link we should rewrite
     function isInternal(href) {
         if (!href) return false;
         if (href[0] === '#') return false;
-        if (href.indexOf('://') !== -1) {
+        if (/^[a-z]+:\/\//i.test(href)) {
             try {
                 var u = new URL(href);
                 return u.origin === window.location.origin;
-            } catch (e) {
-                return false;
-            }
+            } catch (e) { return false; }
         }
         return true;
     }
 
-    // 6. Mark the active language in the switcher
     function markActive(lang) {
         var links = document.querySelectorAll('.lang-switch a');
         for (var i = 0; i < links.length; i++) {
-            var a = links[i];
-            var text = a.textContent.trim();
-            if (text === LANG_DISPLAY[lang]) {
-                a.setAttribute('aria-current', 'true');
+            var t = links[i].textContent.trim();
+            if (t === lang) {
+                links[i].setAttribute('aria-current', 'true');
             } else {
-                a.removeAttribute('aria-current');
+                links[i].removeAttribute('aria-current');
             }
         }
     }
 
-    // 7. Rewrite all internal <a href> links to carry ?lang= and to
-    //    stay in the chosen language's directory
     function rewriteLinks(lang) {
-        var anchors = document.querySelectorAll('a[href]');
-        for (var i = 0; i < anchors.length; i++) {
-            var a = anchors[i];
+        // 1. Rewrite the lang-switcher items so each carries its
+        //    own ?lang=<that-lang>.
+        var switcher = document.querySelectorAll('.lang-switch a[href]');
+        for (var i = 0; i < switcher.length; i++) {
+            var a = switcher[i];
             var href = a.getAttribute('href');
-            if (!isInternal(href)) continue;
-            // Skip the lang-switcher itself (we want the bare path
-            // so each switcher item can carry the right ?lang=).
-            if (a.parentNode && a.parentNode.classList && a.parentNode.classList.contains('lang-switch')) continue;
-            // If the link is to a page in our site, point it at the
-            // chosen language's directory
-            var u;
-            try { u = new URL(href, window.location.origin); } catch (e) { continue; }
-            if (u.origin !== window.location.origin) continue;
-            // Compute the canonical ("en"-path) then re-lang it
-            var canonical = u.pathname;
-            var m = canonical.match(/^\/lha\/(en|zh-CN|zh-TW|ja)\//);
-            var stripFrom = m ? m[0] : '/lha/';
-            if (canonical.indexOf(stripFrom) === 0) {
-                canonical = '/lha/' + canonical.substring(stripFrom.length);
+            if (!href) continue;
+            // The href like "zh-CN/security.html" or "../security.html".
+            // The language this item targets = first path segment
+            // that's a SUPPORTED code.
+            var segs = href.split('/').filter(Boolean);
+            var target = null;
+            for (var s = 0; s < segs.length; s++) {
+                if (SUPPORTED.indexOf(segs[s]) !== -1) { target = segs[s]; break; }
             }
-            a.setAttribute('href', withLang(canonical, lang));
+            if (!target) target = 'en';
+            a.setAttribute('href', withLang(href, target));
         }
-        // Also rewrite lang-switcher items so each carries ?lang= of
-        // the language it points to.
-        var switcherAnchors = document.querySelectorAll('.lang-switch a[href]');
-        for (var j = 0; j < switcherAnchors.length; j++) {
-            var sa = switcherAnchors[j];
-            var sHref = sa.getAttribute('href');
-            if (!sHref) continue;
-            try {
-                var su = new URL(sHref, window.location.origin);
-                if (su.origin !== window.location.origin) continue;
-                // Find the language this switcher item targets
-                var sm = su.pathname.match(/\/(en|zh-CN|zh-TW|ja)\//);
-                var targetLang = sm ? sm[1] : 'en';
-                sa.setAttribute('href', withLang(su.pathname, targetLang));
-            } catch (e) {}
+        // 2. Rewrite all other internal anchors.
+        var anchors = document.querySelectorAll('a[href]');
+        for (var j = 0; j < anchors.length; j++) {
+            var a2 = anchors[j];
+            // Skip the switcher's own anchors (handled above).
+            if (a2.parentNode && a2.parentNode.classList && a2.parentNode.classList.contains('lang-switch')) continue;
+            var href2 = a2.getAttribute('href');
+            if (!isInternal(href2)) continue;
+            a2.setAttribute('href', withLang(href2, lang));
         }
     }
 
-    // 8. Run on DOMContentLoaded
     function init() {
         var desired = getDesired();
         var current = getCurrent();
-
-        // If the current page is the legacy en-only path (no /en/ in
-        // URL), and the user wants a non-en language, redirect to the
-        // per-language file.
+        // If the URL is the legacy top-level path (e.g. /lha/security.html)
+        // and the user wants a non-en language, redirect.
         if (desired !== current) {
-            var path = toLang(window.location.pathname, desired);
-            // Preserve the URL hash and any non-lang query params
+            var target = toLang(window.location.pathname, desired);
             var u = new URL(window.location.href);
-            u.pathname = path;
-            // Search already has ?lang=... from getDesired (or it didn't;
-            // either way we set it fresh).
+            u.pathname = target;
             u.searchParams.set(URL_PARAM, desired);
+            // Preserve any other query params (none today)
             window.location.replace(u.pathname + (u.search ? u.search : '') + u.hash);
             return;
         }
-
-        // Current matches desired — rewrite all internal links and
-        // mark the switcher.
         rewriteLinks(desired);
         markActive(desired);
     }
