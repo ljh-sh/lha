@@ -380,54 +380,6 @@ done</code></pre>
         <code>tar.gz → lha → zip → tar</code> on ratio) is stable.</p>
 </section>
 
-<section id="zh-CN">
-    <h2>zh-CN 概述</h2>
-
-    <h3>核心数据</h3>
-    <p>corpus：kenlm 上游源码 1.83 MiB / 304 文件（无 <code>.git</code>）。</p>
-
-    <table>
-    <thead><tr><th rowspan="2">工具</th><th rowspan="2">级别</th>
-        <th colspan="2">compress</th><th colspan="2">decompress</th>
-        <th rowspan="2">size B</th><th rowspan="2">ratio</th></tr>
-    <tr><th>中位</th><th>±σ</th><th>中位</th><th>±σ</th></tr></thead>
-    <tbody>
-    <tr><td><b>lha</b></td><td>-lh5-</td>
-        <td>~50 ms</td><td>±5</td><td>~40 ms</td><td>±1</td>
-        <td>547,045</td><td>29.93 %</td></tr>
-    <tr><td><b>tar.gz</b></td><td>-6</td>
-        <td>~210 ms</td><td>±5</td><td>~5 ms</td><td>±0.1</td>
-        <td><b>455,435</b></td><td><b>24.93 %</b></td></tr>
-    <tr><td><b>zip</b></td><td>-6</td>
-        <td>~62 ms</td><td>±1</td><td>~3 ms</td><td>±0.4</td>
-        <td>566,683</td><td>31.01 %</td></tr>
-    <tr><td><b>tar</b></td><td>no</td>
-        <td>~80 ms</td><td>±4</td><td>~82 ms</td><td>±5</td>
-        <td>2,732,544</td><td>149.55 %</td></tr>
-    </tbody>
-    </table>
-
-    <h3>三轴排序</h3>
-    <ul>
-        <li><b>compress 速度</b>：<code>zip &lt; lha &lt; tar &lt; tar.gz</code>
-            （zip 约比 lha 快 22 %，lha 约比 tar.gz 快 76 %）</li>
-        <li><b>decompress 速度</b>：<code>tar.gz ≈ zip &lt; lha &lt; tar</code>
-            （绝对值都很小，CDN 场景下网络延迟主导）</li>
-        <li><b>压缩率</b>：<code>tar.gz &lt; lha &lt; zip &lt; tar</code>
-            （差距约 5 %）</li>
-    </ul>
-
-    <h3>取舍</h3>
-    <p>
-        想要 <b>最小体积</b> → 用 tar.gz -9 / zstd / brotli。
-        想要 <b>最快速压缩</b> → 用 zip -6。
-        想要 <b>单文件静态二进制 + 无外部依赖</b> → 用 lha（这正是
-        ljh-sh/lha 静态分发的定位）。
-        想要 <b>Windows / macOS 用户开箱即用</b> → 用 zip 或
-        tar.gz。
-    </p>
-</section>
-
 <footer>
     <p>
         Bench corpus: kenlm upstream source tree, 1.83 MiB / 304
