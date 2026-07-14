@@ -83,15 +83,17 @@ jobs:
         shell: msys2 {0}
         env:
           # MinGW's <unistd.h> does not declare `symlink()` (no _WIN32_WINNT
-          # level helps), but upstream's lhext.c calls it unconditionally.
-          # Define symlink as a function-like macro that expands to `0-1`
-          # (= -1 numerically) so every call site becomes
-          #   l_code = 0-1
-          # which compiles cleanly, returns -1, and lets upstream's existing
-          # make_parent_path + retry + unlink fall-through run. Use `0-1`
-          # instead of `(-1)` because `=` followed by `(` is sh syntax for
-          # array assignment and /bin/sh rejects it inside $(CPPFLAGS).
-          CPPFLAGS: '-Dsymlink(real,name)=0-1'
+          # level reliably helps), but upstream's lhext.c calls it
+          # unconditionally. Stub it via scripts/no-symlink.h which #defines
+          # `symlink(real,name)` as `0 - 1` (= -1). The file is force-
+          # included before any TU, so the call sites compile and the
+          # upstream error fall-through (make_parent_path + retry + unlink)
+          # runs at runtime — same path lha-test14 already assumes for
+          # MinGW. The macro definition must live in a header (rather than
+          # in `-Dsymlink(...)` on the command line) because /bin/sh, the
+          # make recipe interpreter, parses `(real,name)` as a subshell and
+          # rejects the rule before gcc ever sees it.
+          CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
         run: bash scripts/build.sh
 
       # ---- smoke (host-side; for musl runs INSIDE the same container as build) ----
