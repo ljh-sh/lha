@@ -78,30 +78,37 @@ pre code { background: none; color: inherit; padding: 0; }
 }
 .toc ul { margin: 0.3em 0 0; padding-left: 1.3em; }
 
-/* Dedicated language switcher — boxed, prominently labeled. */
-.lang-switch {
-    display: inline-block;
+/* Page header — section nav on the left, language switcher on the right. */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1em;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #d8d8d0;
+    padding-bottom: 0.6em;
+    margin-bottom: 1.6em;
+}
+.page-header .section-nav {
+    font-size: 0.88rem;
+    color: #555;
+}
+.page-header .section-nav a { color: #555; margin-right: 0.6em; text-decoration: none; }
+.page-header .section-nav a:hover { color: #1a1a1a; }
+
+/* Dedicated language switcher — boxed, at the right end of the header. */
+.page-header .lang-switch {
     font-size: 0.88rem;
     color: #555;
     background: #efece5;
     border: 1px solid #d8d8d0;
     border-radius: 4px;
-    padding: 0.4em 0.85em;
-    margin-bottom: 0.55em;
+    padding: 0.3em 0.7em;
 }
-.lang-switch a { color: #555; margin: 0 0.45em; }
-.lang-switch a[aria-current="true"] { font-weight: 600; color: #1a1a1a; }
-.lang-switch strong { color: #1a1a1a; font-weight: 600; }
-
-/* Section navigation — secondary row below the switcher. */
-.section-nav {
-    font-size: 0.88rem;
-    color: #555;
-    border-bottom: 1px solid #d8d8d0;
-    padding-bottom: 0.6em;
-    margin-bottom: 1.6em;
-}
-.section-nav a { color: #555; margin-right: 0.6em; }
+.page-header .lang-switch a { color: #555; margin: 0 0.45em; text-decoration: none; }
+.page-header .lang-switch a:hover { color: #1a1a1a; }
+.page-header .lang-switch a[aria-current="true"] { font-weight: 600; color: #1a1a1a; }
+.page-header .lang-switch strong { color: #1a1a1a; font-weight: 600; }
 
 table {
     border-collapse: collapse;
