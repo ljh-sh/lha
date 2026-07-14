@@ -121,14 +121,32 @@
     }
 
     function rewriteLinks(lang) {
-        // 1. Rewrite the lang-switcher items so each carries its
-        //    own ?lang=<that-lang>.
+        // Compute the current file name (e.g. "security.html" or
+        // "index.html") so the lang-switcher items can build
+        // absolute per-language paths. Without this, a switcher
+        // item like "../security.html" on a per-language page
+        // would resolve to the LEGACY top-level page
+        // (/lha/security.html), not the per-language page
+        // (/lha/en/security.html). The legacy page is the bug
+        // trap: subsequent clicks there are stuck on the same
+        // top-level page because the sibling "security.html"
+        // resolves to itself.
+        var p = window.location.pathname.split('/').filter(Boolean);
+        var currentFile = 'index.html';
+        if (p.length > 0) {
+            var last = p[p.length - 1];
+            if (/\.html?$/.test(last)) currentFile = last;
+            else if (window.location.pathname.slice(-1) === '/') currentFile = 'index.html';
+        }
+
+        // 1. Rewrite the lang-switcher items. Each one targets a
+        //    specific language, so we build a per-language URL
+        //    using the current file + that target lang + ?lang=<that>.
         var switcher = document.querySelectorAll('.lang-switch a[href]');
         for (var i = 0; i < switcher.length; i++) {
             var a = switcher[i];
             var href = a.getAttribute('href');
             if (!href) continue;
-            // The href like "zh-CN/security.html" or "../security.html".
             // The language this item targets = first path segment
             // that's a SUPPORTED code.
             var segs = href.split('/').filter(Boolean);
@@ -137,13 +155,27 @@
                 if (SUPPORTED.indexOf(segs[s]) !== -1) { target = segs[s]; break; }
             }
             if (!target) target = 'en';
-            a.setAttribute('href', withLang(href, target));
+            // Always build an absolute per-language URL for the
+            // switcher. This is the bug fix: clicking "en" from
+            // /lha/zh-CN/security.html now goes to
+            // /lha/en/security.html?lang=en, not
+            // /lha/security.html?lang=en (the legacy top-level
+            // page that's the "stuck" page the user was hitting).
+            var targetPath;
+            if (target === 'en') {
+                targetPath = currentFile;
+            } else {
+                targetPath = target + '/' + currentFile;
+            }
+            a.setAttribute('href', targetPath + '?lang=' + target);
         }
-        // 2. Rewrite all other internal anchors.
+        // 2. Rewrite all other internal anchors — just add the
+        //    ?lang= param; don't change the path. Path rebasing
+        //    is the switcher's job; for body content, keeping the
+        //    relative path preserves author intent.
         var anchors = document.querySelectorAll('a[href]');
         for (var j = 0; j < anchors.length; j++) {
             var a2 = anchors[j];
-            // Skip the switcher's own anchors (handled above).
             if (a2.parentNode && a2.parentNode.classList && a2.parentNode.classList.contains('lang-switch')) continue;
             var href2 = a2.getAttribute('href');
             if (!isInternal(href2)) continue;

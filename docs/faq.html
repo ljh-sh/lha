@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — FAQ (perf, format, lha-rs, future formats)</title>
+<meta name="description" content="A consolidated FAQ covering lha's decompression performance, tANS / zstd competitive positioning, format features vs bzip2/zip/7z, the lha-rs rewrite question, and where new formats (.lh5b- / .lh8- / .lhi-) should live.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">Skip to content</a>
+
+<div class="lang-switch">
+    <strong>en</strong> ·
+    <a href="zh-CN/faq.html">zh-CN</a> ·
+    <a href="zh-TW/faq.html">zh-TW</a> ·
+    <a href="ja/faq.html">ja</a> ·
+    <a href="perf.html">perf</a> ·
+    <a href="security.html">security</a> ·
+    <a href="../index.html">↑ site</a>
+</div>
+
+<section class="hero">
+    <h1>FAQ</h1>
+    <p class="tagline">Performance, format, future formats, and the
+        lha-rs question. A consolidated record of the analysis
+        behind the static-binary distribution.</p>
+    <p class="meta">
+        <a href="#decompress-slow">Decompress speed</a> ·
+        <a href="#tans">tANS competitive range</a> ·
+        <a href="#zstd-1">zstd -1 as "best"</a> ·
+        <a href="#lha-rs">lha-rs</a> ·
+        <a href="#lha-vs-bz">lha vs bzip2 / 7z</a> ·
+        <a href="#new-formats">Where new formats live</a>
+    </p>
+</section>
+
+<section id="decompress-slow">
+    <h2>Why is lha's decompress so much slower than deflate / zstd / lz4?</h2>
+
+    <p><b>Short answer</b>: the algorithm is fundamentally bit-serial
+        and there's zero SIMD in the source. ~3-7× speedup is
+        available with non-SIMD algorithmic changes; matching zstd -1
+        is a multi-year project.</p>
+
+    <h3>The two hot paths in the source</h3>
+    <p>Decoding LZHUF means:</p>
+    <ul>
+        <li>Read N bits → walk a binary tree (one branch per bit) →
+            output one symbol. (<code>src/huf.c:decode_c_dyn</code>,
+            <code>src/huf.c:decode_p_dyn</code>)</li>
+        <li>If the symbol is a back-reference, copy L bytes from D
+            bytes ago in the slide window. (<code>src/slide.c</code>'s
+            hand-rolled <code>for</code> loop, one byte per iteration.)</li>
+    </ul>
+
+    <h3>Why this is fundamentally slow</h3>
+    <ul>
+        <li><b>Static Huffman</b> means the bit-stream is decoded one
+            bit at a time. The decoder can't "look ahead" more than
+            1-2 bits without doing the table walk anyway.</li>
+        <li><b>No SIMD</b> anywhere:
+            <code>grep -nE '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' src/*.c</code>
+            returns zero hits. The vendored 1.14i code is straight
+            ANSI C from 1995-2003, with no vectorization.</li>
+        <li><b>Back-reference copy is byte-by-byte</b> in
+            <code>src/slide.c</code>. A <code>memcpy(dst, src, len)</code>
+            call would already be 2-4× faster on modern glibc
+            (which has SSE2/AVX2 memcpy internally).</li>
+    </ul>
+
+    <h3>What you can do without changing the on-disk format</h3>
+    <table>
+    <thead><tr><th>Optimization</th><th>Where</th><th>Decoded speed gain</th></tr></thead>
+    <tbody>
+    <tr><td>Pre-computed symbol lookup table (zlib-style inflate)</td>
+        <td>replaces bit-by-bit tree walk in <code>src/huf.c</code></td>
+        <td><b>3-5×</b> on the bit-loop part</td></tr>
+    <tr><td><code>memcpy(dst, src, len)</code> for LZ77 back-ref copy</td>
+        <td>replaces per-byte loop in <code>src/slide.c</code></td>
+        <td><b>2-4×</b> on the copy part</td></tr>
+    <tr><td>Branchless 16-bit table lookup</td>
+        <td>same code path as #1, more aggressive</td>
+        <td><b>5-7×</b></td></tr>
+    <tr><td>Two-stage pipeline (read buffer + decode chunks)</td>
+        <td>rewire <code>src/dhuf.c</code> and <code>src/slide.c</code></td>
+        <td><b>1.5-2×</b></td></tr>
+    <tr><td>Cache hot back-reference distances (top-3 MRU)</td>
+        <td>new in <code>src/slide.c</code></td>
+        <td><b>1.2-1.5×</b></td></tr>
+    </tbody>
+    </table>
+    <p>Combined: <b>3-7× decode speedup</b>, taking lha -lh5- from
+        ~45 MB/s to ~150-300 MB/s on the kenlm corpus — competitive
+        with <code>deflate</code> level 1-3 (~300-500 MB/s on the
+        same corpus), but not "best in class."</p>
+
+    <h3>Hard ceiling: what tANS buys (and doesn't)</h3>
+    <p>To match zstd -1 (~2 GB/s) you'd need a fundamentally different
+        entropy coder (tANS/FSE) and a faster LZ77. That means
+        changing the on-disk format — see
+        <a href="#new-formats">"Where should new formats live?"</a>
+        below. lha -lh5- on today's C decoder is the limit; no
+        algorithmic trick within LZHUF gets above ~300 MB/s decode.</p>
+
+    <h3>Source citation</h3>
+    <p>The bench numbers come from a 5-run, kenlm upstream source
+        (1.83 MiB / 304 files) bench, Apple M-series, native lha
+        build. Full table on the
+        <a href="perf.html">perf page</a>. The 5-axis source audit
+        on the <a href="security.html">security page</a> confirms
+        the bit-loop and per-byte copy are the only two
+        decode-side hot paths.</p>
+</section>
+
+<section id="tans">
+    <h2>Could tANS make lha competitive with modern codecs?</h2>
+
+    <p><b>Short answer</b>: yes, with tANS, lha lands in the same
+        league as <code>deflate</code> / <code>brotli</code>. Not in
+        the same league as <code>zstd -1+</code> (multi-year optimization
+        gap) and not in the same league as <code>lz4</code> /
+        <code>snappy</code> (no entropy coder at all — different
+        architecture).</p>
+
+    <h3>Where tANS lands against each competitor</h3>
+    <table>
+    <thead><tr><th>Opponent</th><th>Decode speed</th>
+        <th>Why tANS helps / doesn't</th></tr></thead>
+    <tbody>
+    <tr><td>zstd -1</td><td>~2 GB/s</td>
+        <td>Yann Collet has been tuning FSE/tANS for 8+ years. A
+            "first version" tANS implementation in lha-rs would
+            reach ~1-1.5 GB/s, ~30-50 % behind zstd -1. Multi-year
+            iteration needed to catch up.</td></tr>
+    <tr><td>zstd -3+</td><td>~1 GB/s</td>
+        <td>Even further behind; optimal parser is the hard part.</td></tr>
+    <tr><td>deflate -1 to -3</td><td>500-800 MB/s</td>
+        <td><b>Same league.</b> tANS gets to ~500-800 MB/s, deflate
+            does too. Within a small constant factor.</td></tr>
+    <tr><td>brotli -1</td><td>300-500 MB/s</td>
+        <td><b>Slightly ahead</b> on a fresh tANS implementation
+            (brotli is static-Huffman; tANS is faster at the same
+            ratio).</td></tr>
+    <tr><td>lz4 / snappy / LZO</td><td>3-5 GB/s</td>
+        <td><b>Never competitive.</b> These have no entropy coder —
+            they store LZ77 matches in 4-byte token format and
+            decode to ~1 byte/cycle. LHA-with-tANS has entropy-coder
+            overhead lz4 doesn't, so it can't match that speed class
+            by architecture.</td></tr>
+    </tbody>
+    </table>
+
+    <h3>The fundamental limit</h3>
+    <p>A decoder is bottlenecked by memory bandwidth + branch
+        mispredicts + cache misses. tANS minimizes branch mispredicts
+        (one branch per symbol). lz4 minimizes cache misses (literal
+        copy in 16-byte chunks). Modern CPUs hit ~1 byte/cycle for
+        the simplest decoders; tANS is around 1-2; lz4 is around 1.
+        The architectures <em>trade</em> these two bottlenecks; one
+        can't dominate the other from outside.</p>
+
+    <h3>What lha's actual competitive position is</h3>
+    <p>Adding tANS gives lha "competitive with deflate / brotli"
+        status, not "beating zstd -1+" status, and definitely not
+        "beating lz4" status. The real value of lha in 2026 is
+        <em>not speed</em> — it's <b>35-year format stability</b> +
+        <b>single-file static binary with no deps</b>. Speed is the
+        price of that. So the question becomes: do we add tANS as
+        a <b>new format</b> (.lh8-) to give speed-conscious users an
+        option, while keeping .lh5- as the stable read-only
+        compatibility target? See
+        <a href="#new-formats">"Where should new formats live?"</a>.</p>
+</section>
+
+<section id="zstd-1">
+    <h2>Is zstd -1 "the best" zstd level?</h2>
+
+    <p><b>Short answer</b>: yes, zstd -1 is the fastest zstd level
+        (lowest compression ratio, highest speed). But it's not
+        "best" in the sense of "best default" — that would be
+        <code>zstd -3</code>.</p>
+
+    <h3>zstd's level table</h3>
+    <p>zstd uses <code>zstd -N</code> for levels 1-22, or
+        <code>zstd --fast=N</code> for "faster than default."</p>
+    <table>
+    <thead><tr><th>Level</th><th>Role</th>
+        <th>Ratio vs default -3</th>
+        <th>Encode speed vs default -3</th></tr></thead>
+    <tbody>
+    <tr><td>-1</td><td>fastest</td>
+            <td>~5-10 % worse</td><td>~2-3× faster</td></tr>
+    <tr><td>-3</td><td><b>default</b> — speed / ratio sweet spot</td>
+            <td>1.0×</td><td>1.0×</td></tr>
+    <tr><td>-6</td><td>balanced</td>
+            <td>~5-8 % better</td><td>slightly slower</td></tr>
+    <tr><td>-10</td><td>prefer compression</td>
+            <td>~10-15 % better</td><td>3-5× slower</td></tr>
+    <tr><td>-15</td><td>high compression</td>
+            <td>~20-25 % better</td><td>8-10× slower</td></tr>
+    <tr><td>-22</td><td>max</td>
+            <td>~30-50 % better</td><td>30-50× slower</td></tr>
+    </tbody>
+    </table>
+
+    <h3>Why -3 is the actual default</h3>
+    <p>The speed/ratio curve is <em>not</em> linear:</p>
+    <ul>
+        <li><b>-1 to -3</b>: very flat on the time axis, real gain
+            on ratio. Going to -3 is a no-brainer.</li>
+        <li><b>-3 to -10</b>: roughly linear trade.</li>
+        <li><b>-10 to -22</b>: very flat on the ratio axis, big
+            time cost. The ratio gains diminish.</li>
+    </ul>
+    <p>Hence zstd's author (Yann Collet) chose -3 as the default:
+        it's the shoulder of the curve. -1 is too aggressive on ratio
+        for most use cases; -10 wastes time without much gain.</p>
+
+    <h3>But zstd -1 isn't the fastest decoder overall</h3>
+    <p>zstd -1 is the fastest <em>zstd</em> level, but:</p>
+    <table>
+    <thead><tr><th>Compressor</th><th>Decode speed</th>
+        <th>Has entropy coding?</th></tr></thead>
+    <tbody>
+    <tr><td><b>lz4</b></td><td>~3-4 GB/s</td><td>no</td></tr>
+    <tr><td><b>snappy</b></td><td>~3-5 GB/s</td><td>no</td></tr>
+    <tr><td><b>zstd -1</b></td><td>~1.5-2 GB/s</td><td>yes (FSE / tANS)</td></tr>
+    <tr><td><b>zstd -3</b></td><td>~1 GB/s</td><td>yes</td></tr>
+    <tr><td><b>brotli -1</b></td><td>~300-500 MB/s</td><td>yes (static Huffman)</td></tr>
+    <tr><td><b>deflate -1</b></td><td>~500-800 MB/s</td><td>yes (dynamic Huffman)</td></tr>
+    <tr><td><b>lha -lh5- (current)</b></td><td>~45 MB/s</td><td>yes (static Huffman)</td></tr>
+    </table>
+    <p>lz4 / snappy are 1.5-2× faster than zstd -1 because
+        <em>they have no entropy coder at all</em>. So
+        "fastest decoder" is a two-track race, and lz4 wins the
+        no-entropy track; zstd -1 wins the entropy-track.</p>
+</section>
+
+<section id="lha-vs-bz">
+    <h2>What are lha's unique features vs bzip2 / zip / 7z?</h2>
+
+    <p><b>Short answer</b>: lha's "features" are mostly <em>not</em>
+        features — they're trade-offs that bought a 35-year stable
+        format. But lha has some genuine uniqueness: per-file
+        independent compression, stdio-stream friendly, and
+        streaming-buildable catalog.</p>
+
+    <h3>What lha does <b>not</b> have</h3>
+    <table>
+    <thead><tr><th>Feature</th><th>bzip2</th><th>zip</th><th>7z</th><th>lha</th></tr></thead>
+    <tbody>
+    <tr><td>Block-random access (seek to 100 KB, decode 1 KB)</td>
+        <td>✅ 100-900 KB blocks</td>
+        <td>⚠️ per-file only</td>
+        <td>✅ blocks</td>
+        <td>❌ (stream)</td></tr>
+    <tr><td>Global index file</td>
+        <td>❌</td>
+        <td>✅ central dir at end</td>
+        <td>❌</td>
+        <td>❌ (but streaming-buildable)</td></tr>
+    <tr><td>Sparse files / hardlinks / ACL / xattr</td>
+        <td>❌</td>
+        <td>partial</td>
+        <td>✅</td>
+        <td>❌</td></tr>
+    <tr><td>Strong checksum (SHA-256)</td>
+        <td>❌ (CRC32)</td>
+        <td>❌</td>
+        <td>✅</td>
+        <td>❌ (CRC32)</td></tr>
+    <tr><td>Compression dictionary / pretrain</td>
+        <td>✅</td>
+        <td>❌</td>
+        <td>✅</td>
+        <td>❌</td></tr>
+    </tbody>
+    </table>
+    <p><b>lha is a stream-oriented (not block) archiver</b> — same
+        shape as zip / gzip / tar, not bzip2 / 7z. So bzip2's "seek
+        to byte 100 MB and decode 1 KB" is structurally impossible
+        with lha -lh5-.</p>
+
+    <h3>What lha <b>does</b> have that's unusual</h3>
+    <ul>
+        <li><b>35-year format stability.</b> Files written in 1990
+            decode today. zip has 36+ years, tar has 45+, bzip2
+            28, 7z 25. lha isn't the longest but it's at the top
+            tier.</li>
+        <li><b>Streaming-buildable catalog.</b> LHA headers are
+            fixed-size (~35 B per file). You can read an lha archive
+            in one pass, building an in-memory index of "file N at
+            offset O, size S, mtime M" without decompressing any
+            file. zip can't do this (central directory is at the
+            end).</li>
+        <li><b>Per-file independent compression.</b> Each entry's
+            compression method is in its own header. File 1 might
+            be -lh0- (stored), file 2 -lh5-, file 3 -lh0- again.
+            No "all files share one dictionary" constraint.</li>
+        <li><b>stdio native.</b>
+            <code>lha c dir/ &gt; archive.lzh</code> and
+            <code>lha xq archive.lzh &lt; /dev/tty</code> work
+            directly. zip / 7z / tar need temp files for
+            stdout.</li>
+        <li><b>Tiny decompression code.</b> LZHUF decoder is ~1,500
+            lines of C — much smaller than zstd's ~50,000 or 7z's
+            ~30,000. Easier to embed in embedded systems, easier
+            to audit (we just did 5-axis on it).</li>
+        <li><b>No entropy table in the stream.</b> Static Huffman
+            means the table is in the decoder, not the data. A
+            50-byte file in lha has only the 35-byte header +
+            50-byte body, no per-block overhead. deflate has a
+            ~20-byte tree per block.</li>
+        <li><b>Japanese filename encodings</b> (Shift-JIS, EUC-JP)
+            baked in for legacy BBS / 2ch archives.</li>
+    </ul>
+
+    <h3>What this means strategically</h3>
+    <p>lha's value proposition in 2026 is <b>format stability + zero
+        deps + tiny size + 35-year portability</b>, not "rich feature
+        set." To get bzip2-style features (random access, index,
+        strong checksum) the right path is <em>new formats</em>
+        <code>.lh5b-</code> (block), <code>.lh8-</code> (tANS), and
+        <code>.lhi-</code> (index file) — not a Rust rewrite of
+        lha. See <a href="#new-formats">next question</a>.</p>
+</section>
+
+<section id="lha-rs">
+    <h2>Could a Rust rewrite help lha? (the lha-rs question)</h2>
+
+    <p><b>Short answer</b>: <b>no</b>. lha-rs is not worth it as a 1:1
+        Rust replacement of the C version. The honest answer: most
+        of the standard reasons for a Rust rewrite don't apply to
+        lha specifically.</p>
+
+    <h3>Each standard "rewrite in Rust" reason, applied to lha</h3>
+    <table>
+    <thead><tr><th>"Reason"</th><th>Reality for lha</th></tr></thead>
+    <tbody>
+    <tr><td>Memory safety (Rust eliminates strcpy/sprintf risks)</td>
+        <td>We just did a 5-axis audit. 8 strcpy sites are all
+            bounds-checked; 0 sprintf / gets / scanf. The
+            vulnerable-class doesn't exist in this codebase.
+            Re-implementing the whole thing to remove a class of
+            bugs that aren't present is poor cost / benefit.</td></tr>
+    <tr><td>cargo-fuzz / cargo test infrastructure</td>
+        <td>libFuzzer attaches to any C / C++ project, not just
+            Rust. oss-fuzz provides free hosting for C projects.
+            Adding libFuzzer to lha is 1-2 weeks of work, not a
+            separate repo.</td></tr>
+    <tr><td>Modern error handling (Result&lt;T, E&gt;)</td>
+        <td>C can return a tagged-union error. The real work is
+            the error vocabulary, not the language. 1 week of
+            refactoring lha's error path, not 1 year.</td></tr>
+    <tr><td>Modern CLI (clap / argh)</td>
+        <td>lha's CLI is stable since 1990. Refactoring it is
+            a breaking change, not an improvement. The CLI is
+            not lha's pain point.</td></tr>
+    <tr><td>Pluggable compression crates (flate2, zstd-rs, lz4_flex)</td>
+        <td>Those are for new projects. They don't need to be in
+            lha-rs to be useful — anyone writing a new Rust tool
+            uses them already.</td></tr>
+    <tr><td>Algorithm optimization carrier</td>
+            <td>Wrong layer. The pre-computed-table + memcpy
+                optimizations are language-agnostic. Write them
+                in C — they fit in the existing CI matrix, no new
+                project.</td></tr>
+    <tr><td>New format experiments (tANS, etc.)</td>
+            <td>This is a new-format problem, not a lha-rs problem.
+                New formats live in lha/ as <code>src/lh5b/</code>,
+                <code>src/lh8/</code>. Not a separate repo.</td></tr>
+    </tbody>
+    </table>
+
+    <h3>When a Rust rewrite is actually right</h3>
+    <p>One of these conditions must hold:</p>
+    <ul>
+        <li>The C maintainer is retiring and the only next-generation
+            maintainers are Rust developers — it's an exit strategy.</li>
+        <li>A new format is <em>designed Rust-first</em> (uses async,
+            <code>Send</code> plumbing, <code>rayon</code> parallelism,
+            std SIMD for portable vectorization).</li>
+        <li>A specific user requirement mandates it (e.g. "must run in
+            WebAssembly in a browser extension" — Rust's
+            <code>wasm32-unknown-unknown</code> is the only sane
+            path).</li>
+    </ul>
+    <p>None of these applies to lha today.</p>
+
+    <h3>What the right move is</h3>
+    <ol>
+        <li><b>Stay in lha (C) — maintain and audit.</b> 5-axis
+            security audit done; libFuzzer integration 1-2 weeks
+            away; oss-fuzz entry 1-2 hours. Done.</li>
+        <li><b>Add new formats in C as subdirectories</b>:
+            <code>src/lh5b/</code> (block format with random read),
+            <code>src/lh8/</code> (tANS), <code>src/lhi/</code>
+            (index file). C implementations get the existing CI
+            matrix; no new repo, no new release cadence.</li>
+        <li><b>Write a format spec</b> at <code>docs/lzh-format.md</code>
+            so any future implementation (Rust, Python, Go) has a
+            single source of truth.</li>
+        <li><b>If new formats prove useful,</b> <em>then</em> a
+            separate <code>ljh-sh/lha-spec</code> (or similar) for
+            multiple reference implementations in different
+            languages. <em>Not</em> a "rewrite" repo — a
+            multi-impl test-bed.</li>
+    </ol>
+    <p><b>lha-rs is not on this list.</b> It would be a 6-12-month
+        project to rewrite a 13,400-line C program whose safety
+        profile is already good, in a language whose value
+        proposition doesn't help. Better: keep the C, do the small
+        additional work in C, and reserve Rust for the day a new
+        format genuinely needs it.</p>
+</section>
+
+<section id="new-formats">
+    <h2>Where should new formats (.lh5b- / .lh8- / .lhi-) live?</h2>
+
+    <p><b>Short answer</b>: in the existing <code>ljh-sh/lha</code>
+        repository, not in a new one. New formats are <em>additions</em>
+        to the lha family, not replacements for it.</p>
+
+    <h3>Proposed new formats</h3>
+    <table>
+    <thead><tr><th>Suffix</th><th>Backend</th>
+        <th>Compatibility with .lh5-</th>
+        <th>What it adds</th></tr></thead>
+    <tbody>
+    <tr><td><code>.lh5-</code> (current)</td>
+        <td>LZHUF + per-byte copy</td>
+        <td>— (canonical)</td>
+            <td>35-year stable format; tiny binary; zero deps</td></tr>
+    <tr><td><code>.lh5b-</code></td>
+        <td>Same as .lh5-, but with 256 KB blocks</td>
+        <td>Old .lh5- readers can still extract; new readers gain
+            block random-read</td>
+            <td>Random access within a file; partial extraction
+                (close to bzip2 behavior)</td></tr>
+    <tr><td><code>.lh8-</code></td>
+        <td>tANS (FSE) + faster LZ77</td>
+        <td>New format, not readable by old .lh5- decoder</td>
+            <td>Decode speed competitive with deflate -1; better
+                ratio than .lh5- on most corpora</td></tr>
+    <tr><td><code>.lhi-</code></td>
+        <td>Index file (separate from archive)</td>
+        <td>Works with any .lh5- (or .lh8-) archive</td>
+            <td>Streaming-buildable catalog; lets
+                <code>lhacat archive.lzh</code> list every file
+                without reading any body</td></tr>
+    </tbody>
+    </table>
+
+    <h3>Where each lives</h3>
+    <ul>
+        <li><b><code>src/lh5b/</code></b> — block format. C.
+            Subdirectory of <code>ljh-sh/lha</code>. 4-6 weeks.</li>
+        <li><b><code>src/lh8/</code></b> — tANS backend. C or
+            Rust (tANS is a fresh format, so this is the place where
+            <em>if</em> Rust is the right choice, this is the right
+            place). 12-18 months. Likely <em>still</em> in C for
+            consistency with the rest of lha.</li>
+        <li><b><code>src/lhi/</code></b> — index format. C. 1-2
+            weeks.</li>
+        <li><b><code>docs/lzh-format.md</code></b> — format spec
+            that the new formats all reference. 2-3 weeks.</li>
+    </ul>
+
+    <h3>Single binary that handles all of them</h3>
+    <p>The killer feature of doing it in the existing repo: a single
+        <code>ljh-sh/lha</code> binary that reads <em>all</em> of
+        these formats:</p>
+    <pre><code>$ lha l archive.lh5-          # canonical
+$ lha l archive.lh5b         # block random-read
+$ lha l archive.lh8-          # tANS, faster decode
+$ lha l --index archive.lhi   # streamed catalog
+$ lha x archive.lh8-          # write a new tANS archive</code></pre>
+    <p>Single static binary, ~250 KB on disk, zero deps. The same
+        <code>x i lha</code> / <code>x eget use lha</code> install
+        path. 35-year stable read path + modern tANS write path +
+        block random read. <strong>This is lha's competitive
+        position in 2026:</strong> a single binary that does what
+        no other archiver can do, and weighs 250 KB.</p>
+</section>
+
+<footer>
+    <p>
+        All questions on this page trace back to data on the
+        <a href="perf.html">perf page</a> (5-run median, kenlm_src
+        1.83 MiB / 304 files, Apple M-series, native lha build) and
+        the source on the <a href="security.html">security page</a>
+        (5-axis audit of <code>upstream/lha/</code> @ vendored
+        commit <code>jca02266/lha@86094cb</code>). Numbers may
+        differ by host but the orderings and conclusions are stable.
+    </p>
+</footer>
+
+</main>
+
+</body>
+</html>
