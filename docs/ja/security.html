@@ -50,31 +50,22 @@
         組み込み版を使用）以外に configure 時のオプション依存は
         ない。五つの独立した軸で監査：</p>
 
-    ::::ol
-    :::li <b>ネットワーク面。</b>ランタイムで socket を開いたり、
-        DNS を引いたり、HTTP/SFTP を話したりするか？
-    :::
-
-    :::li <b>サブプロセス面。</b><code>fork</code> / <code>exec</code> /
-        <code>system</code> / <code>popen</code> で他のバイナリを
-        起動するか？
-    :::
-
-    :::li><b>権限昇格。</b><code>setuid</code>、<code>setgid</code>、
-        <code>chroot</code>、<code>mount</code> を呼ぶか？
-    :::
-
-    :::li><b>メモリ安全でないプリミティブ。</b>CWE フラグ付き関数
-        （<code>strcpy</code>、<code>sprintf</code>、<code>gets</code>、
-        <code>scanf</code>）のうちどれが使われているか？
-        使われている場合、長さチェックされているか？
-    :::
-
-    :::li><b>テンポラリファイル競合。</b>伸長時に原子的
-        <code>mkstemp(3)</code> を使うか、競合可能な
-        <code>mktemp(3)</code> か？
-    :::
-    ::::
+<ol>
+  <li>        <b>ネットワーク面。</b>ランタイムで socket を開いたり、
+                DNS を引いたり、HTTP/SFTP を話したりするか？</li>
+  <li>        <b>サブプロセス面。</b><code>fork</code> / <code>exec</code> /
+                <code>system</code> / <code>popen</code> で他のバイナリを
+                起動するか？</li>
+  <li>        ><b>権限昇格。</b><code>setuid</code>、<code>setgid</code>、
+                <code>chroot</code>、<code>mount</code> を呼ぶか？</li>
+  <li>        ><b>メモリ安全でないプリミティブ。</b>CWE フラグ付き関数
+                （<code>strcpy</code>、<code>sprintf</code>、<code>gets</code>、
+                <code>scanf</code>）のうちどれが使われているか？
+                使われている場合、長さチェックされているか？</li>
+  <li>        ><b>テンポラリファイル競合。</b>伸長時に原子的
+                <code>mkstemp(3)</code> を使うか、競合可能な
+                <code>mktemp(3)</code> か？</li>
+</ol>
 
     <p>各軸が一つの <code>grep -nE</code> に対応する。結果は
         次節。</p>
@@ -83,67 +74,58 @@
 <section id="results">
     <h2>監査結果</h2>
 
-    ::::ol
-    :::li><b>ネットワーク呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
-        <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
-        ゼロ一致。lha は socket を開かず、DNS を引かず、HTTP を
-        話さず、URL 処理ライブラリを呼びません。リンカシンボル
-        テーブルにもネットワーク系ライブラリは存在しない；
-        ランタイムは完全オフライン。
-    :::
-
-    :::li><b>サブプロセス呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
-        <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
-        ゼロ一致。lha は shell out しない。外部圧縮ツールは
-        使わない（自前実装）、<code>xz</code> への pipe もしない、
-        外部の署名・検証ツールも呼び出さない。<code>stdio.h</code>
-        への呼び出しはアーカイブファイル自体の読み書きのみ。
-    :::
-
-    :::li><b>権限昇格：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
-        <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
-        ゼロ一致。lha は呼び出し元の <code>umask</code>（
-        <code>extract.c</code> 内の <code>umask(022)</code>）で
-        展開し、権限を昇格しない。シンボリックリンクの展開は
-        ロックダウンされている：<code>lhext.c</code> はシンボリック
-        リンクが展開先のパスを越えて辿ることを阻止し、展開先
-        外を指すアーカイブのシンボリックリンクを拒否する。これは
-        まさに CVE-2022-1027 系のような旧 archiver が持っていた
-        脆弱性クラス &mdash; lha は該当しない。
-    :::
-
-    :::li><b>メモリ安全でないプリミティブ：<span style="color:#1a7f37; font-weight:600">strcpy 8 箇所、すべて境界チェック済み；sprintf/gets/scanf ゼロ</span>。</b>
-        <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
-        <p>8 箇所の <code>strcpy</code> 呼び出し点。
-            <code>sprintf</code> / <code>gets</code> / <code>scanf</code> はゼロ。
-            8 箇所の内訳：</p>
-        <ul>
-            <li><b>8 箇所のうち 7 箇所</b>は直前で長さチェック。
-                それぞれソース中に <code>/* ok */</code> 注釈あり
-                &mdash; 上流メンテナのレビューマーカー。</li>
-            <li>残り 1 箇所 &mdash; <code>strcpy(p, buf)</code> in
-                <code>util.c:126</code> &mdash; は <code>strdup</code>
-                パターン：<code>p</code> は <code>strlen(buf)+1</code>
-                バイトで <code>malloc</code> 直後、つまりちょうどもう
-                1 バイト余裕がある。バッファオーバーランなし。</li>
-        </ul>
-        <p>現代の lha 代替（lz4、zstd、7z）は同様に大きなプリミティブ
-            面を持つが、現在の sanitizer ファジング調整済み。lha は
-            古い分、危険呼び出し点の数が少なく、個別にチェック済み。</p>
-    :::
-
-    :::li><b>テンポラリファイル：<span style="color:#1a7f37; font-weight:600">mkstemp(3)、mktemp(3) ではない</span>。</b>
-        <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
-        <p><code>lharc.c:1240</code>：</p>
-        <pre><code>old_umask = umask(077);
-fd = mkstemp(temporary_name);
-umask(old_umask);</code></pre>
-        <p><code>mkstemp(3)</code> は POSIX 原子的、デフォルト権限 0700 &mdash;
-            攻撃者がパスを差し替える競合窓がない。
-            <code>mktemp(3)</code> は deprecated / 危険な版。lha は
-            使わない。</p>
-    :::
-    ::::
+<ol>
+  <li>        ><b>ネットワーク呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+                <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
+                ゼロ一致。lha は socket を開かず、DNS を引かず、HTTP を
+                話さず、URL 処理ライブラリを呼びません。リンカシンボル
+                テーブルにもネットワーク系ライブラリは存在しない；
+                ランタイムは完全オフライン。</li>
+  <li>        ><b>サブプロセス呼び出し：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+                <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
+                ゼロ一致。lha は shell out しない。外部圧縮ツールは
+                使わない（自前実装）、<code>xz</code> への pipe もしない、
+                外部の署名・検証ツールも呼び出さない。<code>stdio.h</code>
+                への呼び出しはアーカイブファイル自体の読み書きのみ。</li>
+  <li>        ><b>権限昇格：<span style="color:#1a7f37; font-weight:600">なし</span>。</b>
+                <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
+                ゼロ一致。lha は呼び出し元の <code>umask</code>（
+                <code>extract.c</code> 内の <code>umask(022)</code>）で
+                展開し、権限を昇格しない。シンボリックリンクの展開は
+                ロックダウンされている：<code>lhext.c</code> はシンボリック
+                リンクが展開先のパスを越えて辿ることを阻止し、展開先
+                外を指すアーカイブのシンボリックリンクを拒否する。これは
+                まさに CVE-2022-1027 系のような旧 archiver が持っていた
+                脆弱性クラス &mdash; lha は該当しない。</li>
+  <li>        ><b>メモリ安全でないプリミティブ：<span style="color:#1a7f37; font-weight:600">strcpy 8 箇所、すべて境界チェック済み；sprintf/gets/scanf ゼロ</span>。</b>
+                <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
+                <p>8 箇所の <code>strcpy</code> 呼び出し点。
+                    <code>sprintf</code> / <code>gets</code> / <code>scanf</code> はゼロ。
+                    8 箇所の内訳：</p>
+                <ul>
+                    <li><b>8 箇所のうち 7 箇所</b>は直前で長さチェック。
+                        それぞれソース中に <code>/* ok */</code> 注釈あり
+                        &mdash; 上流メンテナのレビューマーカー。</li>
+                    <li>残り 1 箇所 &mdash; <code>strcpy(p, buf)</code> in
+                        <code>util.c:126</code> &mdash; は <code>strdup</code>
+                        パターン：<code>p</code> は <code>strlen(buf)+1</code>
+                        バイトで <code>malloc</code> 直後、つまりちょうどもう
+                        1 バイト余裕がある。バッファオーバーランなし。</li>
+                </ul>
+                <p>現代の lha 代替（lz4、zstd、7z）は同様に大きなプリミティブ
+                    面を持つが、現在の sanitizer ファジング調整済み。lha は
+                    古い分、危険呼び出し点の数が少なく、個別にチェック済み。</p></li>
+  <li>        ><b>テンポラリファイル：<span style="color:#1a7f37; font-weight:600">mkstemp(3)、mktemp(3) ではない</span>。</b>
+                <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
+                <p><code>lharc.c:1240</code>：</p>
+                <pre><code>old_umask = umask(077);
+        fd = mkstemp(temporary_name);
+        umask(old_umask);</code></pre>
+                <p><code>mkstemp(3)</code> は POSIX 原子的、デフォルト権限 0700 &mdash;
+                    攻撃者がパスを差し替える競合窓がない。
+                    <code>mktemp(3)</code> は deprecated / 危険な版。lha は
+                    使わない。</p></li>
+</ol>
 </section>
 
 <section id="runtime">

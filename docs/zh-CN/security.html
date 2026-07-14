@@ -50,31 +50,22 @@
         <code>configure</code>-time 可选依赖。我们从五个独立维度
         审计它：</p>
 
-    ::::ol
-    :::li <b>网络接口面。</b>运行时是否会打开 socket、解析 DNS、
-        或者发起 HTTP/SFTP 请求？
-    :::
-
-    :::li <b>子进程调用面。</b>是否会 <code>fork</code>、
-        <code>exec</code>、<code>system</code> 或者 <code>popen</code>
-        去调用其他二进制？
-    :::
-
-    :::li <b>权限提升。</b>是否调用过 <code>setuid</code>、
-        <code>setgid</code>、<code>chroot</code> 或者
-        <code>mount</code>？
-    :::
-
-    :::li <b>内存不安全原语。</b>用了哪些 CWE 标记的函数
-        （<code>strcpy</code>、<code>sprintf</code>、<code>gets</code>、
-        <code>scanf</code>）？如果用了，是否做了长度检查？
-    :::
-
-    :::li><b>临时文件竞态。</b>解压缩用的是原子操作的
-        <code>mkstemp(3)</code>，还是可竞争的旧式
-        <code>mktemp(3)</code>？
-    :::
-    ::::
+<ol>
+  <li>        <b>网络接口面。</b>运行时是否会打开 socket、解析 DNS、
+                或者发起 HTTP/SFTP 请求？</li>
+  <li>        <b>子进程调用面。</b>是否会 <code>fork</code>、
+                <code>exec</code>、<code>system</code> 或者 <code>popen</code>
+                去调用其他二进制？</li>
+  <li>        <b>权限提升。</b>是否调用过 <code>setuid</code>、
+                <code>setgid</code>、<code>chroot</code> 或者
+                <code>mount</code>？</li>
+  <li>        <b>内存不安全原语。</b>用了哪些 CWE 标记的函数
+                （<code>strcpy</code>、<code>sprintf</code>、<code>gets</code>、
+                <code>scanf</code>）？如果用了，是否做了长度检查？</li>
+  <li>        ><b>临时文件竞态。</b>解压缩用的是原子操作的
+                <code>mkstemp(3)</code>，还是可竞争的旧式
+                <code>mktemp(3)</code>？</li>
+</ol>
 
     <p>每个维度对应一条 <code>grep -nE</code>。结果列在下一节。</p>
 </section>
@@ -82,63 +73,54 @@
 <section id="results">
     <h2>审计结果</h2>
 
-    ::::ol
-    :::li <b>网络调用：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
-        <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
-        零匹配。lha 从不打开 socket，从不解析 DNS，从不发 HTTP，
-        也不调用任何 URL 处理库。链接器符号表里也找不到网络
-        库；运行时完全离线。
-    :::
-
-    :::li <b>子进程调用：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
-        <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
-        零匹配。lha 从不 shell out。它不调用外部压缩器（自带）、
-        不 pipe 到 <code>xz</code>、不调用外部签名或验证工具。
-        对 <code>stdio.h</code> 的唯一调用是读写归档文件本身。
-    :::
-
-    :::li <b>权限提升：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
-        <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
-        零匹配。lha 用调用方的 <code>umask</code>（通过
-        <code>extract.c</code> 中的 <code>umask(022)</code>）解压缩，
-        从不提升权限。符号链接的解压缩是锁定的：<code>lhext.c</code>
-        阻止符号链接穿过解压缩路径，并拒绝任何指向解压缩目标
-        之外的归档符号链接。这正是 CVE-2022-1027 系列老 archiver
-        的漏洞类 &mdash; lha 不受影响。
-    :::
-
-    :::li <b>内存不安全原语：<span style="color:#1a7f37; font-weight:600">8 处 strcpy，全部带长度检查；0 处 sprintf/gets/scanf</span>。</b>
-        <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
-        <p>8 处 <code>strcpy</code> 调用点；0 处 <code>sprintf</code>、
-            0 处 <code>gets</code>、0 处 <code>scanf</code>。8 处
-            strcpy 中：</p>
-        <ul>
-            <li><b>8 处中有 7 处</b>紧跟了长度检查。每个这样的
-                调用点都标注了 <code>/* ok */</code> &mdash; 上游
-                维护者的 review 标记。</li>
-            <li>剩下 1 处 &mdash; <code>strcpy(p, buf)</code> in
-                <code>util.c:126</code> &mdash; 是个
-                <code>strdup</code> 模式：<code>p</code> 刚刚
-                <code>malloc</code> 出大小为
-                <code>strlen(buf)+1</code>，所以正好有
-                这么多字节可用。无缓冲溢出。</li>
-        </ul>
-        <p>对比现代 lha 替代品（lz4、zstd、7z），它们有类似或更大的
-            原语面但都跑过当前的 sanitizer-fuzz 调优。lha 更老但
-            危险调用点数量少、且每个都做了检查。</p>
-    :::
-
-    :::li><b>临时文件：<span style="color:#1a7f37; font-weight:600">mkstemp(3)，不是 mktemp(3)</span>。</b>
-        <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
-        <p>在 <code>lharc.c:1240</code>：</p>
-        <pre><code>old_umask = umask(077);
-fd = mkstemp(temporary_name);
-umask(old_umask);</code></pre>
-        <p><code>mkstemp(3)</code> 是 POSIX 原子操作，默认权限 0700 &mdash;
-            没有攻击者能换掉路径的竞态窗口。<code>mktemp(3)</code>
-            是已弃用的、不安全版本；lha 不使用它。</p>
-    :::
-    ::::
+<ol>
+  <li>        <b>网络调用：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
+                <pre><code>grep -nE '\b(socket|connect|inet_|gethostbyname|getaddrinfo|curl|http_send)\b' upstream/lha/src/*.c</code></pre>
+                零匹配。lha 从不打开 socket，从不解析 DNS，从不发 HTTP，
+                也不调用任何 URL 处理库。链接器符号表里也找不到网络
+                库；运行时完全离线。</li>
+  <li>        <b>子进程调用：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
+                <pre><code>grep -nE '\b(fork|vfork|system|exec[pvl][ep]?|popen|daemon)\b' upstream/lha/src/*.c</code></pre>
+                零匹配。lha 从不 shell out。它不调用外部压缩器（自带）、
+                不 pipe 到 <code>xz</code>、不调用外部签名或验证工具。
+                对 <code>stdio.h</code> 的唯一调用是读写归档文件本身。</li>
+  <li>        <b>权限提升：<span style="color:#1a7f37; font-weight:600">无</span>。</b>
+                <pre><code>grep -nE '\b(setuid|setgid|seteuid|setegid|setreuid|chroot|mount|acl_set)\b' upstream/lha/src/*.c</code></pre>
+                零匹配。lha 用调用方的 <code>umask</code>（通过
+                <code>extract.c</code> 中的 <code>umask(022)</code>）解压缩，
+                从不提升权限。符号链接的解压缩是锁定的：<code>lhext.c</code>
+                阻止符号链接穿过解压缩路径，并拒绝任何指向解压缩目标
+                之外的归档符号链接。这正是 CVE-2022-1027 系列老 archiver
+                的漏洞类 &mdash; lha 不受影响。</li>
+  <li>        <b>内存不安全原语：<span style="color:#1a7f37; font-weight:600">8 处 strcpy，全部带长度检查；0 处 sprintf/gets/scanf</span>。</b>
+                <pre><code>grep -nE '\b(strcpy|sprintf|gets|scanf)\s*\(' upstream/lha/src/*.c</code></pre>
+                <p>8 处 <code>strcpy</code> 调用点；0 处 <code>sprintf</code>、
+                    0 处 <code>gets</code>、0 处 <code>scanf</code>。8 处
+                    strcpy 中：</p>
+                <ul>
+                    <li><b>8 处中有 7 处</b>紧跟了长度检查。每个这样的
+                        调用点都标注了 <code>/* ok */</code> &mdash; 上游
+                        维护者的 review 标记。</li>
+                    <li>剩下 1 处 &mdash; <code>strcpy(p, buf)</code> in
+                        <code>util.c:126</code> &mdash; 是个
+                        <code>strdup</code> 模式：<code>p</code> 刚刚
+                        <code>malloc</code> 出大小为
+                        <code>strlen(buf)+1</code>，所以正好有
+                        这么多字节可用。无缓冲溢出。</li>
+                </ul>
+                <p>对比现代 lha 替代品（lz4、zstd、7z），它们有类似或更大的
+                    原语面但都跑过当前的 sanitizer-fuzz 调优。lha 更老但
+                    危险调用点数量少、且每个都做了检查。</p></li>
+  <li>        ><b>临时文件：<span style="color:#1a7f37; font-weight:600">mkstemp(3)，不是 mktemp(3)</span>。</b>
+                <pre><code>grep -nE '\b(mkstemp|mktemp)\b' upstream/lha/src/*.c</code></pre>
+                <p>在 <code>lharc.c:1240</code>：</p>
+                <pre><code>old_umask = umask(077);
+        fd = mkstemp(temporary_name);
+        umask(old_umask);</code></pre>
+                <p><code>mkstemp(3)</code> 是 POSIX 原子操作，默认权限 0700 &mdash;
+                    没有攻击者能换掉路径的竞态窗口。<code>mktemp(3)</code>
+                    是已弃用的、不安全版本；lha 不使用它。</p></li>
+</ol>
 </section>
 
 <section id="runtime">
