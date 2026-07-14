@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — the LZH algorithm: history, performance, current positioning</title>
+<meta name="description" content="The LZH family of compression algorithms (LZARI, LZHUF): a 1990 LZ77 + dynamic Huffman design tuned for fast unpack on a 286. Why the vendored code still ships as-is in 2026, why the static binary is what most people want, and how this project is the default static build used by x-cmd's zuz module.">
+<link rel="stylesheet" href="styles.css">
+<script src="lang-router-early.js"></script>
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">Skip to content</a>
+
+<div class="lang-switch">
+    <strong>en</strong> ·
+    <a href="zh-CN/algorithm.html">zh-CN</a> ·
+    <a href="zh-TW/algorithm.html">zh-TW</a> ·
+    <a href="ja/algorithm.html">ja</a> ·
+    <a href="faq.html">faq</a> ·
+    <a href="security.html">security</a> ·
+    <a href="build-audit.html">build audit</a> ·
+    <a href="../index.html">↑ site</a>
+</div>
+
+<section class="hero">
+    <h1>Algorithm — history, performance, current positioning</h1>
+    <p class="tagline"><code>lha</code> ships <b>LZHUF</b>: 1990-era
+        LZ77 + dynamic Huffman, designed for fast unpack on a 286 with
+        1 MiB of RAM, written before SIMD was a thing. This page is
+        about the algorithm, what it costs in 2026, and why a single
+        static binary of it is what <em>the rest of the world</em>
+        wires up against.</p>
+    <p class="meta">
+        <a href="#algorithm">The algorithm</a> ·
+        <a href="#history">History</a> ·
+        <a href="#perf">Performance</a> ·
+        <a href="#today">Today</a> ·
+        <a href="#summary">Summary</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR.</b> <code>lha</code> ships LZHUF: a 1990 LZ77 + dynamic
+        Huffman design tuned for "fast unpack on a 286 with 1 MiB RAM",
+        written before SIMD existed. Today it's the right answer when
+        (a) you're unpacking a 35-year-old <code>.lzh</code> archive,
+        (b) you need a single static binary with zero system deps for a
+        CI artifact or a CDN download, or (c) you wire format
+        auto-detection into something like x-cmd's
+        <a href="https://github.com/x-cmd/x-cmd">zuz</a> module &mdash;
+        which is exactly why this repo exists (see <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a>: the maintainer closes the loop by having
+        <code>zuz</code> lazy-fetch this repo's release artifact).
+        Decompression is bit-serial; compression is ~2.2× faster than
+        deflate at the cost of ~5 % ratio. Read on for the lineage,
+        the bench summary, and the place this format still occupies
+        in 2026.</p>
+</aside>
+
+<section id="algorithm">
+    <h2>1. The algorithm</h2>
+    <p>Every compression method in lha's family
+        (<code>-lh0-</code> through <code>-lh7-</code>, plus
+        <code>-lhd-</code> for directory headers) shares the same
+        two-stage shape:</p>
+    <ol>
+        <li><b>LZ77-style string matching</b>. Find repeated byte
+            sequences in the input and emit back-references of the
+            form <code>(distance, length)</code> instead of repeating
+            the bytes. The "LZ" in LZARI / LZHUF / ZIP / gzip / zstd
+            / lz4 / 7-zip is all this same idea, going back to
+            Lempel &amp; Ziv's 1977 paper.</li>
+        <li><b>An entropy coder</b> on the literals and the
+            back-references. This is the part that varies:
+            <ul>
+                <li><code>-lh1-</code> &mdash; <b>LZARI</b>:
+                    LZ77 + arithmetic coding (Okumura, 1988).</li>
+                <li><code>-lh5-</code> &mdash; <b>LZHUF</b>:
+                    LZ77 + dynamic Huffman (Tagawa, 1990). The default.
+                </li>
+                <li><code>-lh4-</code>, <code>-lh6-</code>,
+                    <code>-lh7-</code>, <code>-lzs-</code> &mdash;
+                    experimental refinements on the entropy backend
+                    or unused encodings kept for compatibility.</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h3>Static vs dynamic Huffman</h3>
+    <p>LZHUF uses <em>static</em> Huffman tables per block,
+        re-derived every few KB of input. This is the design quirk
+        that defines the entire trade-off:</p>
+    <ul>
+        <li><b>Pro.</b> The encoder doesn't have to ship the Huffman
+            table in the bitstream. The decoder has known tables per
+            block and decodes in a tight inner loop with no per-block
+            table-load overhead.</li>
+        <li><b>Con.</b> When local statistics shift &mdash; a header
+            block, then a body of structured text, then a binary blob
+            &mdash; a static table is locally suboptimal. A <em>dynamic</em>
+            Huffman (deflate's default, what gzip uses) carries the
+            table with the data and adapts. That's where the ~5 %
+            ratio gap on the <a href="perf.html">bench</a> comes from.</li>
+    </ul>
+
+    <h3>The bit-serial decode loop (and why it's slow)</h3>
+    <p>LZHUF's decode loop reads the bitstream <em>one bit at a
+        time</em>, looking up the next symbol via a small 2× table
+        walk. This is fundamentally serial: bit <i>n+1</i> cannot
+        be read until bit <i>n</i> has been looked up.</p>
+    <p>The ANSI C source is straight 1995-2003 code with no SIMD
+        intrinsics:
+    </p>
+    <pre><code>$ grep -nEi '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' upstream/lha/src/*.c
+$                       # zero hits</code></pre>
+    <p>Vectorizing the LZ77 length-distance copy would get you maybe
+        1.5&ndash;2× decompress speedup; the bit-serial Huffman loop
+        is the ceiling. To go faster on decompress you have to switch
+        algorithms, not micro-optimize LZHUF. (See the
+        <a href="perf.html#lzhuf-why-slow">perf page</a> for the
+        longer version.)</p>
+</section>
+
+<section id="history">
+    <h2>2. History &mdash; the lineage</h2>
+    <p>The <a href="index.html#history">history section on the home
+        page</a> covers the 1988-2022 arc in detail; the compact
+        version:</p>
+    <ul>
+        <li><b>1977 &mdash; LZ77.</b> Abraham Lempel &amp; Jacob Ziv
+            publish <i>A Universal Algorithm for Sequential Data
+            Compression</i> in <i>IEEE Transactions on Information
+            Theory</i>. The sliding-window + back-reference idea
+            that defines every modern archiver.</li>
+
+        <li><b>1988 &mdash; LZARI.</b> Haruhiko Okumura publishes
+            a CPU-friendly LZ77 + arithmetic coding variant. The
+            286-era arithmetic coder that LHA borrows.</li>
+
+        <li><b>1988&ndash;1989 &mdash; LHarc.</b> Haruyasu Yoshizaki
+            (Y.Tagawa) wraps LZARI in an MS-DOS archive format.
+            First widely-used archive format in Japan.</li>
+
+        <li><b>1990 &mdash; LZHUF, the format we ship.</b> Tagawa
+            refines LZARI into LZ77 + dynamic Huffman, renames the
+            format from LHarc to LHA. The
+            compression-method-suffix convention (<code>-lh5-</code>
+            in archive filenames) is born; it lives to this day.</li>
+
+        <li><b>1991&ndash;1993 &mdash; LHA for UNIX.</b> Masaru Oki
+            ports to UNIX; Nobutaka Watazaki rewrites the codebase.
+            The canonical C source that's been vendored for 30 years.</li>
+
+        <li><b>1993 &mdash; PKZIP 2.0 + Info-ZIP</b> displace LHA
+            on Western PCs.</li>
+
+        <li><b>1994&ndash;2010 &mdash; <code>.lzh</code> stays hot in
+            Japan.</b> Major sites distribute in LZH. Windows SFX
+            archives use LHA extensively. J2K-style bulletin boards
+            exchange LZH into the late 2000s. <code>.lzh</code> is
+            the dominant distribution format in Japan through the
+            early 2000s.</li>
+
+        <li><b>2022 &mdash; autoconf revival.</b> GitHub user
+            <a href="https://github.com/jca02266/lha">jca02266</a>
+            picks up the dormant tree, adds a modern autotools
+            build, tags <b>LHa for UNIX 1.14i-ac20220213</b>. This
+            is the source vendored at commit <code>86094cb</code>
+            in this repo.</li>
+
+        <li><b>2026 &mdash; ljh-sh/lha.</b> Vendors
+            <code>jca02266/lha@86094cb</code>; ships a single static
+            binary for every major platform. The reason for being
+            here today is in §4.</li>
+    </ul>
+</section>
+
+<section id="perf">
+    <h2>3. Performance &mdash; the three axes</h2>
+    <p>Numbers from the <a href="perf.html">efficiency bench</a> on
+        the 1.83 MiB kenlm source corpus, 5 runs per cell, median
+        ± sample-stdev. The cliffnotes:</p>
+    <table>
+    <thead>
+    <tr><th>tool</th><th>level</th><th>compress</th>
+        <th>decompress</th><th>ratio</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><b>lha</b></td><td><code>-lh5-</code> (default)</td>
+            <td><b>~50 ms</b></td><td>~40 ms</td>
+            <td>29.93 %</td></tr>
+        <tr><td>zip</td><td><code>-6</code> (default)</td>
+            <td>~62 ms</td><td>~3 ms</td>
+            <td>31.01 %</td></tr>
+        <tr><td>tar (no compression)</td><td>&mdash;</td>
+            <td>~80 ms</td><td>~82 ms</td>
+            <td>149.55 %</td></tr>
+        <tr><td>tar.gz</td><td><code>-6</code> (default)</td>
+            <td>~210 ms</td><td>~5 ms</td>
+            <td><b>24.93 %</b></td></tr>
+    </tbody>
+    </table>
+
+    <h3>Three observations that matter</h3>
+    <ol>
+        <li><b>Compress speed.</b> <code>lha</code> sits between
+            <code>zip</code> (fastest, ~22 % lead) and
+            <code>tar.gz</code> (slowest, ~4× slower). For workloads
+            that compress-then-store (build artifact retention,
+            package mirrors), <code>lha</code> is the cheapest
+            non-trivial compressor that still beats the wire by ~3×.</li>
+        <li><b>Decompress speed.</b> <code>zip</code> and
+            <code>tar.gz</code> decompress in single-digit ms;
+            <code>lha</code> takes ~40 ms. The bit-serial Huffman
+            loop is the ceiling. The absolute time is still tiny
+            &mdash; well below network-RTT noise on any CDN.
+            Workloads that re-decompress from a CDN 100 times are
+            dominated by HTTP latency, not algorithm choice.</li>
+        <li><b>Ratio.</b> <code>lha</code> lands ~5 percentage points
+            above <code>deflate</code> (~91 KB larger on 1.8 MiB of
+            source code). This is the deliberate 1990 trade-off:
+            tuned for fast unpack on a 286, not for the tightest
+            compression on a 2020s workstation.</li>
+    </ol>
+
+    <h3>Where LZHUF loses &mdash; and where it doesn't</h3>
+    <ul>
+        <li>✗ On ratio, <code>deflate</code> and <code>zstd</code>
+            win by 5&ndash;15 percentage points.</li>
+        <li>✗ On decompress, <code>zstd</code> is ~5&ndash;10× faster
+            than <code>lha</code>; <code>lz4</code> is ~3&ndash;5×
+            faster still.</li>
+        <li>✓ On static-binary footprint + zero-dep shipping,
+            <code>lha</code> wins outright: ~150 KB and runs on
+            anything with a kernel.</li>
+        <li>✓ On "I have an archive from a 1994 game and nothing else
+            opens it," <code>lha</code> wins by default &mdash; it's
+            the only thing that can.</li>
+        <li>✓ On long-term archival stability, <code>lha</code>
+            wins by virtue of its 35-year-old format spec still
+            being implemented and reader-compatible.</li>
+    </ul>
+    <p>The <a href="perf.html#deeper">deeper reading</a> section of
+        the bench page goes through algorithm-internal reasons. The
+        short version: lha is a 1990 design that hasn't changed, and
+        the speed ceiling is the algorithm, not the implementation.</p>
+</section>
+
+<section id="today">
+    <h2>4. Current positioning &mdash; why this project exists in 2026</h2>
+    <p>The vendored <code>jca02266/lha@86094cb</code> source is a
+        1995-2003 ANSI C codebase that's had one modern-build-system
+        pass in 2022. ljh-sh/lha takes it from there and builds one
+        thing: <b>a single static binary of <code>lha</code> for every
+        platform, so users don't need a compiler</b>.</p>
+    <p>There are three concrete demand surfaces for that proposition
+        in 2026:</p>
+
+    <h3>4.1 Legacy <code>.lzh</code> unpacking</h3>
+    <p>The most obvious: someone has a 1994 game patch, a J2K-style
+        BBS legacy attachment, or a Japanese open-source archive from
+        the 2000s. Nothing modern opens <code>.lzh</code>. With
+        <code>x eget use lha</code> you have it in
+        <code>~/.local/bin</code> in two seconds and
+        <code>lha x foo.lzh</code> works. Without the binary, the
+        user has to install a compiler, find a 1990s-vintage autoconf
+        patch, and pray their libc hasn't broken the build.</p>
+
+    <h3>4.2 Single static binary for CI artifact / CDN distribution</h3>
+    <p><code>lha</code> produces a single <code>.lzh</code> archive
+        from any source tree in ~50&ndash;80 ms with zero system deps
+        on the host. For CI artifact publishers (anyone packaging
+        build output for download), this means:</p>
+    <ul>
+        <li>No <code>libz</code>, <code>libcurl</code>,
+            <code>libiconv</code>, <code>libssl</code> to drag into
+            a minimal container.</li>
+        <li>One ~150 KB binary to vendor, sign, and ship.</li>
+        <li>A decompress path that works on Windows, macOS, Linux,
+            BSD, and any embedded Linux alike &mdash; because the
+            binary runs from <code>~/.local/bin</code> without a
+            system install.</li>
+    </ul>
+    <p>This is the core "static binary distribution convention"
+        that ljh-sh adopts across projects (kenlm, upxz, now lha).
+        See the <a href="build-audit.html">build audit</a> for what
+        that pipeline looks like.</p>
+
+    <h3>4.3 x-cmd's <code>zuz</code> module &mdash; the direct motivation</h3>
+    <p>This is the reason this project ships as a static build.</p>
+    <p><a href="https://github.com/x-cmd/x-cmd">x-cmd</a>'s
+        <code>zuz</code> module does format auto-detection on archive
+        files: pick the right tool by extension, decompress or
+        compress transparently. It supports <code>tar</code>,
+        <code>tar.gz</code>, <code>tar.bz2</code>, <code>tar.xz</code>,
+        <code>zip</code>, <code>7z</code>, <code>rar</code>,
+        <code>lha</code>, etc. But it has one architectural rule:</p>
+    <blockquote>
+        <p><b>Never bundle a format-specific tool. Always shell out
+            to a system-installed binary.</b></p>
+    </blockquote>
+    <p>The problem landed in
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a> (December 2024): a user wants LHA/LZH
+        support in <code>zuz</code>, but no portable package system
+        x-cmd supports currently ships <code>lha</code>. The thread
+        unfolds as:</p>
+    <ul>
+        <li>Dec 2024: the maintainer (edwinjhlee) notes that v0.5.1
+            shipped 7z-based <em>decompression</em> as a fallback
+            (which works as long as the user has either
+            <code>lha</code> or <code>lhasa</code> installed).</li>
+        <li>Jan 2025: the maintainer points users at
+            <code>x install lha</code> as the workaround path
+            until a packaged <code>lha</code> module exists.</li>
+        <li>Jul 2026: the maintainer
+            <a href="https://github.com/x-cmd/x-cmd/issues/131#issuecomment-4968653094">closes
+            the loop</a>: <code>zuz</code> will lazy-download this
+            very repo's release artifact, so <code>x uz foo.lha</code>
+            works on any system without a pre-installed <code>lha</code>.
+        </li>
+    </ul>
+    <p>That means the project's primary install path for
+        <code>zuz</code> users is:</p>
+    <pre><code>x uz foo.lha
+# zuz detects .lha, sees no lha in PATH,
+# falls back to: eget ljh-sh/lha --to ~/.local/bin/lha
+# then: ~/.local/bin/lha x foo.lha</code></pre>
+    <p>Not Homebrew. Not apt. Not a per-distro package. One
+        <em>default static install</em> that doesn't require a
+        privileged install, doesn't require a tap, doesn't require
+        a build chain, and works on every platform x-cmd supports.
+        That's the version of "default static install capability"
+        this repo exists to provide.</p>
+    <p>If you use x-cmd and ever do <code>x uz foo.lha</code> on a
+        system with no <code>lha</code>, you're using this binary.
+        If you've never used x-cmd and just need to open a
+        <code>.lzh</code>, you're also using this binary &mdash; same
+        artifact, same release, same vendored source.</p>
+
+    <h3>4.4 Where this isn't positioned</h3>
+    <p>To be honest about the boundary:</p>
+    <ul>
+        <li><b>Not</b> an algorithm upgrade. There's no tANS port,
+            no LZMA-lha variant, no tANS-for-LZH format. The
+            vendored 1.14i stays untouched.</li>
+        <li><b>Not</b> a replacement for <code>tar.gz</code>,
+            <code>zip</code>, or <code>zstd</code>. The
+            <a href="perf.html">bench</a> says clearly when to
+            reach for which.</li>
+        <li><b>Not</b> a sign of LZH making a comeback. The
+            format's longevity is the only reason this binary
+            exists; if your workflow started after 2010, you
+            probably don't have <code>.lzh</code> files.</li>
+    </ul>
+</section>
+
+<section id="summary">
+    <h2>5. Summary</h2>
+    <p>If you want one rule of thumb:</p>
+    <table>
+    <thead>
+    <tr><th>if you care about&hellip;</th><th>reach for</th></tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td>opening a <code>.lzh</code> from 1994</td>
+        <td><b><code>lha</code></b> (this binary)</td>
+    </tr>
+    <tr>
+        <td>one static binary on a closed system</td>
+        <td><b><code>lha</code></b> (~150 KB, no deps)</td>
+    </tr>
+    <tr>
+        <td><code>zuz</code>-style format auto-detection</td>
+        <td><b><code>lha</code></b> (lazily fetched from ljh-sh/lha)</td>
+    </tr>
+    <tr>
+        <td>smallest artifact for a long-tail CDN</td>
+        <td><code>tar.gz -9</code> or <code>zstd</code></td>
+    </tr>
+    <tr>
+        <td>decompressing at microsecond scale</td>
+        <td><code>lz4</code> or <code>zstd</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>This page exists because "what is this binary" and "why does
+        it exist" deserve one place, not scattered across the
+        <a href="index.html#history">history</a>,
+        <a href="perf.html">bench</a>,
+        <a href="build-audit.html">build audit</a>, and
+        <a href="faq.html">FAQ</a> pages.</p>
+</section>
+
+<footer>
+    <p>
+        This page is part of the
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a> GitHub
+        Pages site. Sources: 1990 LZH format spec (Haruyasu Yoshizaki);
+        the <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        source tree at <code>86094cb</code>; the
+        <a href="perf.html">efficiency bench</a>; the
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        zuz issue #131</a> for the static-binary motivation.
+        Page text is dedicated to the public domain.
+    </p>
+</footer>
+
+</main>
+
+  <script src="lang-router.js" defer></script>
+
+</body>
+</html>

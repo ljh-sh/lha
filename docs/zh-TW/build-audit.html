@@ -6,6 +6,7 @@
 <title>lha — 建置工具鏈稽核（autotools、CI、供應鏈）</title>
 <meta name="description" content="對 lha 專案的 autotools 建置鏈、GitHub Actions CI、vendored 原始碼來源、x eget 安裝路徑進行風險審查。">
 <link rel="stylesheet" href="../styles.css">
+<script src="../lang-router-early.js"></script>
 </head>
 <body>
 
@@ -220,10 +221,26 @@ git ls-remote https://github.com/jca02266/lha.git 86094cb</code></pre>
         簽名（<a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign
         sign-blob</code></a>）。</p>
 
-    <h3>R12. <code>x eget use lha</code> 不驗證 checksum（除 TLS 外）</h3>
-    <p>使用者信任到 GitHub 的 TLS 連線。這是業界基準（TUF、in-toto、
-        sigstore 是選項但需要用戶端設定）。對單二進位分發，
-        簽名 + 文件化的驗證命令是實用的底。</p>
+    <h3>R12. <code>x eget use lha</code> 會驗證 GitHub 提供的 SHA256SUMS，但 checksum 檔本身未簽名</h3>
+    <p><b>對前一版本頁的更正。</b><code>eget</code> 預設會驗證
+        checksum——它從 GitHub release 拉取
+        <code>SHA256SUMS</code>（或每個 asset 的
+        <code>.sha256</code>）檔，並把它和已下載 asset 的 hash
+        做比對。所以一般使用者每次 <code>x eget use lha</code>
+        都會拿到 checksum 驗證。本頁先前的文字（說 eget 只靠
+        TLS 驗證）是錯的。</p>
+    <p><b>剩下的。</b><code>SHA256SUMS</code> 檔和二進位 asset
+        來自同一個 GitHub release。GitHub 帳號被入侵——或者維護
+        者濫用編輯 release 的權限——可以一次同時置換兩者。
+        Checksum 檔本身沒被簽名，所以 eget 驗證的是 asset 與
+        checksum 之間的<em>內部一致性</em>，而不是其中任何一個
+        的出處。</p>
+    <p><b>一行修復</b>：同 R11——<code>cosign sign-blob</code>，
+        針對每個 release asset（keyless，透過 GitHub OIDC）。
+        這樣在 GitHub 的 checksum 之上再加一層 sigstore 簽名；
+        要求強完整性的使用者下載後跑
+        <code>cosign verify-blob</code>。補上了帳號入侵後的
+        缺口。</p>
 
     <h3>R13. 沒有 SBOM</h3>
     <p><b>風險</b>：對小型靜態二進位低。靜態二進位的唯一「元件」

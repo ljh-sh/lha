@@ -6,6 +6,7 @@
 <title>lha — ビルドツールチェーン監査（autotools、CI、サプライチェーン）</title>
 <meta name="description" content="lha プロジェクトの autotools ビルドチェーン、GitHub Actions CI、ベンダーされたソースの来歴、x eget インストール経路のリスクレビュー。ピン留め・署名・SBOM の現状を正直に。">
 <link rel="stylesheet" href="../styles.css">
+<script src="../lang-router-early.js"></script>
 </head>
 <body>
 
@@ -240,11 +241,28 @@ git ls-remote https://github.com/jca02266/lha.git 86094cb</code></pre>
         OIDC ベース keyless 署名を提供（<a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign
         sign-blob</code></a>）。</p>
 
-    <h3>R12. <code>x eget use lha</code> は TLS 以外で checksum を検証しない</h3>
-    <p>ユーザは GitHub への TLS 接続を信頼する。業界標準
-        （TUF、in-toto、sigstore はオプションだがクライアント側
-        セットアップが必要）。単一バイナリ配布では、署名 + 検証
-        コマンドの文書化が実用的な底。</p>
+    <h3>R12. <code>x eget use lha</code> は GitHub 提供の SHA256SUMS を検証するが、checksum ファイル自体は未署名</h3>
+    <p><b>前版の本ページへの訂正。</b><code>eget</code> はデフォ
+        ルトで checksum を検証します — GitHub の release から
+        <code>SHA256SUMS</code>（または各 asset の
+        <code>.sha256</code>）ファイルを取得し、ダウンロードし
+        た asset の hash と比較します。一般ユーザは
+        <code>x eget use lha</code> を実行するたびに checksum
+        検証を得ます。本ページの以前の説明（eget は TLS のみで
+        検証）は誤りでした。</p>
+    <p><b>残る課題。</b><code>SHA256SUMS</code> ファイルもバイナ
+        リ asset も同じ GitHub release に紐づきます。GitHub アカ
+        ウントの侵害 — あるいはメンテナによる release 編集権限の
+        悪用 — は両方を一度に差し替え可能。Checksum ファイル自
+        体は署名されていないので、eget の検証は asset と
+        checksum の間の<em>内部一貫性</em>をチェックするもので、
+        それぞれの出所ではありません。</p>
+    <p><b>1 行修正</b>：R11 と同じ — 各 release asset に
+        <code>cosign sign-blob</code>（keyless、GitHub OIDC 経
+        由）。これで GitHub の checksum の上に sigstore 署名が一
+        層乗ります。強い完全性を求めるユーザはダウンロード後に
+        <code>cosign verify-blob</code> を実行。アカウント侵害後
+        のギャップを塞ぎます。</p>
 
     <h3>R13. SBOM なし</h3>
     <p><b>リスク</b>：小さい静的バイナリには低。静的バイナリの唯一の

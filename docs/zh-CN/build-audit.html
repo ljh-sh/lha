@@ -6,6 +6,7 @@
 <title>lha — 构建工具链审计（autotools、CI、供应链）</title>
 <meta name="description" content="对 lha 项目的 autotools 构建链、GitHub Actions CI、vendored 源码来源、x eget 安装路径进行风险审查。列出哪些已固定、哪些已签名、哪些没有。">
 <link rel="stylesheet" href="../styles.css">
+<script src="../lang-router-early.js"></script>
 </head>
 <body>
 
@@ -257,10 +258,25 @@ git ls-remote https://github.com/jca02266/lha.git 86094cb
         keyless 签名（<a href="https://docs.sigstore.dev/cosign/keyless/"><code>cosign
         sign-blob --output-signature foo.sig foo</code></a>）。</p>
 
-    <h3>R12. <code>x eget use lha</code> 不验证 checksum（除 TLS 外）</h3>
-    <p>用户信任到 GitHub 的 TLS 连接。这是业界基线（TUF、in-toto、
-        sigstore 是选项但需要客户端设置）。对单二进制分发，
-        签名 + 文档化的验证命令是实用的底。</p>
+    <h3>R12. <code>x eget use lha</code> 验证 GitHub 提供的 SHA256SUMS，但 checksum 文件本身没签名</h3>
+    <p><b>对前一版本页的更正。</b><code>eget</code> 默认会验证
+        checksum——它从 GitHub release 拉取
+        <code>SHA256SUMS</code>（或每个 asset 的
+        <code>.sha256</code>）文件，与已下载 asset 的 hash 做比
+        较。所以普通用户每次 <code>x eget use lha</code> 都会拿到
+        checksum 验证。本页先前的文字（说 eget 只靠 TLS 验证）是
+        不对的。</p>
+    <p><b>剩下的。</b><code>SHA256SUMS</code> 文件和二进制 asset
+        来自同一个 GitHub release。GitHub 账号被入侵——或者维护者
+        滥用编辑 release 的权限——可以一次同时替换两者。Checksum
+        文件本身没被签名，所以 eget 验证的是 asset 与 checksum
+        之间的<em>内部一致性</em>，而不是其中任何一个的出处。</p>
+    <p><b>一行修复</b>：同 R11——<code>cosign sign-blob</code>，
+        针对每个 release asset（keyless，通过 GitHub OIDC）。
+        这样在 GitHub 的 checksum 之上再加一层 sigstore 签名；
+        要求强完整性的用户下载后跑
+        <code>cosign verify-blob</code>。关掉了账号入侵后的
+        缺口。</p>
 
     <h3>R13. 没有 SBOM</h3>
     <p><b>风险</b>：对小型静态二进制低。静态二进制的唯一「组件」

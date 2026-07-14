@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — LZH アルゴリズム：歴史、性能、現在の位置づけ</title>
+<meta name="description" content="LZH 系の圧縮アルゴリズム（LZARI、LZHUF）：1990 年代の LZ77 + 動的ハフマン設計、286 での高速展開を目指して調整。なぜ vendored されたソースが 2026 年もそのまま配布されるのか、なぜ単一の静的バイナリが多くの人に必要とされるのか、そして本プロジェクトが x-cmd zuz モジュールから既定の静的ビルドとして参照されるようになるまでの経緯。">
+<link rel="stylesheet" href="../styles.css">
+<script src="../lang-router-early.js"></script>
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">本文へスキップ</a>
+
+<div class="lang-switch">
+    <a href="../algorithm.html">en</a> ·
+    <a href="../zh-CN/algorithm.html">zh-CN</a> ·
+    <a href="../zh-TW/algorithm.html">zh-TW</a> ·
+    <strong>ja</strong> ·
+    <a href="faq.html">faq</a> ·
+    <a href="security.html">セキュリティ</a> ·
+    <a href="build-audit.html">ビルド監査</a> ·
+    <a href="../index.html">↑ サイト</a>
+</div>
+
+<section class="hero">
+    <h1>アルゴリズム &mdash; 歴史、性能、現在の位置づけ</h1>
+    <p class="tagline"><code>lha</code> が同梱しているのは
+        <b>LZHUF</b>：1990 年代の LZ77 + 動的ハフマンで、「RAM
+        1 MiB の 286 での高速展開」を目指して調整され、SIMD が
+        まだ存在しなかった時代に書かれたものです。このページは
+        アルゴリズムそのもの、2026 年におけるそのコスト、そして
+        なぜ<em>別の</em>プロジェクトの単一静的バイナリがその上に
+        乗っかるのか、を扱います。</p>
+    <p class="meta">
+        <a href="#algorithm">アルゴリズム</a> ·
+        <a href="#history">歴史</a> ·
+        <a href="#perf">性能</a> ·
+        <a href="#today">現在</a> ·
+        <a href="#summary">まとめ</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR。</b><code>lha</code> が同梱する LZHUF は、1990
+        年代の LZ77 + 動的ハフマンで、「1 MiB RAM の 286 での
+        高速展開」を目指して書かれ、SIMD がまだ無い時代の設計で
+        す。今日、それは次の 3 つの場面で正解になります：（a）
+        35 年前の <code>.lzh</code> 書庫を展開する、（b）CI
+        アーティファクトや CDN ダウンロード向けに、ゼロ依存の単
+        一静的バイナリが必要、（c）x-cmd の
+        <a href="https://github.com/x-cmd/x-cmd">zuz</a> モジ
+        ュールのように、書庫フォーマットを自動判別する仕組みに組
+        み込む &mdash; まさにこのリポジトリが存在する理由そのもの
+        です（<a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a> を参照：メンテナが
+        <code>zuz</code> にこのリポジトリのリリース成果物を惰性
+        ダウンロードさせることで一件落着）。展開はビット・シリ
+        アル；圧縮は deflate より約 2.2 倍速いが、引き換えに圧
+        縮率は約 5 % 落ちます。続きでは系譜、ベンチ要旨、2026
+        年におけるこのフォーマットの居場所を見ていきます。</p>
+</aside>
+
+<section id="algorithm">
+    <h2>1. アルゴリズム</h2>
+    <p>lha ファミリーの各圧縮方式（<code>-lh0-</code>～
+        <code>-lh7-</code>、それと <code>-lhd-</code> のディレク
+        トリヘッダ）は、共通する 2 段構成をしています：</p>
+    <ol>
+        <li><b>LZ77 風の文字列マッチング</b>。入力中のバイト列
+            の繰り返しを探し、バイトをくり返す代わりに
+            <code>(distance, length)</code> の後方参照を出力しま
+            す。LZARI / LZHUF / ZIP / gzip / zstd / lz4 /
+            7-zip の「LZ」はすべてこの同じアイデアで、源流は
+            Lempel &amp; Ziv の 1977 年の論文です。</li>
+        <li><b>エントロピーコーダ</b>。リテラルと後方参照を
+            ビット列に符号化します。ここで方式ごとに違いが出ます：
+            <ul>
+                <li><code>-lh1-</code> &mdash; <b>LZARI</b>：
+                    LZ77 + 算術符号（Okumura、1988）。</li>
+                <li><code>-lh5-</code> &mdash; <b>LZHUF</b>：
+                    LZ77 + 動的ハフマン（Tagawa、1990）。デフォ
+                    ルト方式。</li>
+                <li><code>-lh4-</code>、<code>-lh6-</code>、
+                    <code>-lh7-</code>、<code>-lzs-</code> &mdash;
+                    エントロピー部分の実験的改良、または互換性
+                    のために取っておかれた未使用符号。</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h3>静的 vs 動的ハフマン</h3>
+    <p>LZHUF は<em>静的</em>ハフマン表をブロックごとに使います。
+        数 KB の入力ごとに再導出されます。この設計上の割り切り
+        が、すべてのトレードオフを規定します：</p>
+    <ul>
+        <li><b>利点。</b>エンコーダはハフマン表をビットストリーム
+            に出さなくて済みます。デコーダはブロックごとに既知
+            の表を持ち、ループのオーバーヘッドなしでコンパクトな
+            内部ループで復号できます。</li>
+        <li><b>代償。</b>局所統計量が変化するとき（ヘッダブロック
+            → 構造化テキスト本体 → バイナリ塊）、静的表はそのブ
+            ロックでは局所的に最適ではありません。<em>動的</em>ハ
+            フマン（deflate のデフォルトで、gzip が使う方式）で
+            は、表をデータと一緒に持ち、適応します。これが
+            <a href="perf.html">ベンチ</a>で見える約 5 % の圧縮率差
+            の出どころです。</li>
+    </ul>
+
+    <h3>ビット・シリアルの復号ループ（そしてなぜ遅いのか）</h3>
+    <p>LZHUF の復号ループはビットストリームを<em>1 ビットずつ</em>
+        読み、小さな 2× 表を辿って次のシンボルを引き当てます。こ
+        れは原理的にシリアルで、ビット <i>n+1</i> はビット
+        <i>n</i> の表引きが終わるまで読めません。</p>
+    <p>ANSI C のソースコードは 1995-2003 年のままで、SIMD イン
+        トリンジックは入っていません：</p>
+    <pre><code>$ grep -nEi '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' upstream/lha/src/*.c
+$                       # ヒットなし</code></pre>
+    <p>LZ77 の length-distance コピーをベクトル化しても、展開で
+        せいぜい 1.5&ndash;2 倍程度。ビット・シリアルのハフマン
+        ループが天井です。展開をさらに速くするには、アルゴリズム
+        を替えるしかなく、LZHUF をマイクロ最適化しても限界があ
+        ります（詳しくは <a href="perf.html#lzhuf-why-slow">ベンチページ</a>）。</p>
+</section>
+
+<section id="history">
+    <h2>2. 歴史 &mdash; 系譜</h2>
+    <p><a href="../index.html#history">ホームページの歴史セクション</a>
+        が 1988-2022 の弧を詳しく語っているので、ここでは圧縮版
+        を：</p>
+    <ul>
+        <li><b>1977 &mdash; LZ77。</b>Abraham Lempel と Jacob Ziv
+            が <i>IEEE Transactions on Information Theory</i> に
+            <i>A Universal Algorithm for Sequential Data
+            Compression</i> を発表。すべての現代アーカイバを規
+            定する、スライディング・ウィンドウ + 後方参照のアイ
+            ディア。</li>
+
+        <li><b>1988 &mdash; LZARI。</b>奥村晴彦が CPU に優しい
+            LZ77 + 算術符号の変種を発表。LHA が借用した 286 時代
+            の算術コーダ。</li>
+
+        <li><b>1988&ndash;1989 &mdash; LHarc。</b>吉崎英明
+            （Y.Tagawa）氏が LZARI を MS-DOS のアーカイバ形式
+            にくるむ。日本で最初に広く使われたアーカイブ形式。</li>
+
+        <li><b>1990 &mdash; LZHUF、本プロジェクトが同梱する形式。</b>
+            Tagawa 氏が LZARI を LZ77 + 動的ハフマンへと改良し、
+            形式名を LHarc から LHA へ改称。圧縮方式をファイル名
+            末尾に埋め込む慣習（<code>-lh5-</code> など）が生ま
+            れ、今日まで続いている。</li>
+
+        <li><b>1991&ndash;1993 &mdash; LHA for UNIX。</b>大木優氏
+            が UNIX に移植；綿貫和彦氏がコードベースを大幅書き
+            換え。30 年近く vendored され続けている正典 C ソー
+            ス。</li>
+
+        <li><b>1993 &mdash; PKZIP 2.0 + Info-ZIP</b>が西側の
+            PC から LHA を駆逐。</li>
+
+        <li><b>1994&ndash;2010 &mdash; 日本では <code>.lzh</code>
+            がまだ主流。</b>主要な配布サイトは LZH、Windows の
+            SEX（自己解凍書庫）は LHA を多用、2ch 系の BBS では
+            2000 年代後半まで LZH の交換が普通。<code>.lzh</code>
+            は 2000 年代初頭までの日本で支配的な配布形式。</li>
+
+        <li><b>2022 &mdash; autoconf による再始動。</b>GitHub ユー
+            ザー <a href="https://github.com/jca02266/lha">jca02266</a>
+            氏が眠っていたツリーを引き取り、現代的な autotools
+            ビルドを整えて <b>LHa for UNIX 1.14i-ac20220213</b>
+            とタグ付け。本リポジトリで
+            <code>86094cb</code> のコミットとして vendored して
+            いるソースです。</li>
+
+        <li><b>2026 &mdash; ljh-sh/lha。</b>
+            <code>jca02266/lha@86094cb</code> を vendored し、
+            主要プラットフォームごとに単一の静的バイナリとして配
+            布。2026 年にもなってこのプロジェクトが存在する理由は
+            §4 にあります。</li>
+    </ul>
+</section>
+
+<section id="perf">
+    <h2>3. 性能 &mdash; 3 つの軸</h2>
+    <p>数字は <a href="perf.html">効率ベンチ</a>による、kenlm
+        ソース 1.83 MiB のコーパス、5 試行、中央値 ± 標本標準
+        偏差。かいつまむと：</p>
+    <table>
+    <thead>
+    <tr><th>ツール</th><th>レベル</th><th>圧縮</th>
+        <th>展開</th><th>圧縮率</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><b>lha</b></td><td><code>-lh5-</code>（デフォルト）</td>
+            <td><b>~50 ms</b></td><td>~40 ms</td>
+            <td>29.93 %</td></tr>
+        <tr><td>zip</td><td><code>-6</code>（デフォルト）</td>
+            <td>~62 ms</td><td>~3 ms</td>
+            <td>31.01 %</td></tr>
+        <tr><td>tar（無圧縮）</td><td>&mdash;</td>
+            <td>~80 ms</td><td>~82 ms</td>
+            <td>149.55 %</td></tr>
+        <tr><td>tar.gz</td><td><code>-6</code>（デフォルト）</td>
+            <td>~210 ms</td><td>~5 ms</td>
+            <td><b>24.93 %</b></td></tr>
+    </tbody>
+    </table>
+
+    <h3>覚えておくべき 3 つの観察</h3>
+    <ol>
+        <li><b>圧縮速度。</b><code>lha</code> は
+            <code>zip</code>（最速、約 22 % リード）と
+            <code>tar.gz</code>（最遅、約 4 倍遅い）の間。「圧縮
+            して保管」系のワークロード（ビルド成果物の保持、ミ
+            ラーリング）なら、<code>lha</code> は非自明な圧縮器の
+            うちで最も安価で、生ストリームに対して約 3 倍の優位
+            性を保つ。</li>
+        <li><b>展開速度。</b><code>zip</code> と
+            <code>tar.gz</code> の展開は 1 桁ミリ秒；
+            <code>lha</code> は約 40 ms。ビット・シリアルのハフマ
+            ンループが天井。絶対値はまだ小さく、CDN のネットワー
+            ク RTT ノイズを下回る。CDN から 100 回展開し直すよ
+            うな負荷は、アルゴリズム選択ではなく HTTP レイテンシ
+            に支配される。</li>
+        <li><b>圧縮率。</b><code>lha</code> は
+            <code>deflate</code> より約 5 ポイント上（1.8 MiB の
+            ソースで 91 KB 増）。これは 1990 年の意図的な割り切
+            りで、2020 年代のワークステーションで最も小さく圧縮
+            するのではなく、286 で高速展開することを目標に調整さ
+            れている。</li>
+    </ol>
+
+    <h3>現代アルゴリズムに負ける場面 &mdash; 負けない場面</h3>
+    <ul>
+        <li>✗ 圧縮率では <code>deflate</code> と <code>zstd</code>
+            が 5&ndash;15 ポイント勝つ。</li>
+        <li>✗ 展開速度では <code>zstd</code> が
+            <code>lha</code> の約 5&ndash;10 倍速く、
+            <code>lz4</code> はさらに約 3&ndash;5 倍速い。</li>
+        <li>✓ 静的バイナリのフットプリント + ゼロ依存配布では
+            <code>lha</code> の完全勝利：~150 KB でカーネルさえ
+            あればどこでも動く。</li>
+        <li>✓ 「1994 年のゲームパッチがあって、他のツールでは開
+            けない」という場面では <code>lha</code> がデフォルト
+            で勝つ &mdash; 開けるのがこれしか無いから。</li>
+        <li>✓ 長期アーカイブの安定性でも <code>lha</code> が勝
+            つ：35 年前のフォーマット仕様が今も実装され、読まれ
+            ている。</li>
+    </ul>
+    <p><a href="perf.html#deeper">ベンチページの "Deeper reading"</a>
+        セクションがアルゴリズム内部の理由を解説しています。短
+        い結論：lha は 1990 年の設計で、今日まで変わらず、天井
+        を決めるのはアルゴリズムであり実装ではない。</p>
+</section>
+
+<section id="today">
+    <h2>4. 現在の位置づけ &mdash; 2026 年になぜこのプロジェクトが存在するか</h2>
+    <p>Vendored した <code>jca02266/lha@86094cb</code> のソース
+        は、1995-2003 年の ANSI C コードベースで、2022 年に
+        autotools 化を一回だけ経たものです。ljh-sh/lha はそこ
+        から先、たった一つのことだけをします：<b>あらゆるプ
+        ラットフォーム向けに <code>lha</code> の単一静的バイナリ
+        を提供し、ユーザにコンパイラを要求しない</b>。</p>
+    <p>2026 年、この価値提案に具体的な需要が 3 つあります：</p>
+
+    <h3>4.1 レガシー <code>.lzh</code> の展開</h3>
+    <p>最も分かりやすいケース：誰かが 1994 年のゲームパッチ、
+        2ch 系の BBS の旧添付ファイル、または 2000 年代の日本の
+        オープンソース書庫を持っている。現代のツールはどれも
+        <code>.lzh</code> を開けない。<code>x eget use lha</code>
+        を実行すれば、2 秒で <code>~/.local/bin</code> に届き、
+        <code>lha x foo.lzh</code> で展開できる。このバイナリが
+        なければ、ユーザはコンパイラを入れ、1990 年代の autoconf
+        パッチを探し、libc が壊していないことを祈ることになる。</p>
+
+    <h3>4.2 CI アーティファクト / CDN 配布用の単一静的バイナリ</h3>
+    <p><code>lha</code> はあらゆるソースツリーから単一の
+        <code>.lzh</code> 書庫を ~50&ndash;80 ms で生成し、ホストに
+        システム依存を求めません。CI アーティファクトの配布者
+        （ビルド成果物をダウンロード用にパッケージする人すべて）
+        にとって、これは次のような意味を持ちます：</p>
+    <ul>
+        <li>最小コンテナに <code>libz</code>、<code>libcurl</code>、
+            <code>libiconv</code>、<code>libssl</code> などを引き
+            込む必要なし。</li>
+        <li>~150 KB のバイナリ 1 個をベンダリング・署名・配布。</li>
+        <li>展開経路は Windows / macOS / Linux / BSD / 組み込み
+            Linux いずれでも成立 &mdash; バイナリはシステムイン
+            ストール無しで <code>~/.local/bin</code> から動く。</li>
+    </ul>
+    <p>これは ljh-sh が各プロジェクト横断で採用している「静的
+        バイナリ配布規約」の中核（kenlm、upxz、そして lha）で
+        す。具体的なパイプラインは
+        <a href="build-audit.html">ビルド監査</a>を参照。</p>
+
+    <h3>4.3 x-cmd の <code>zuz</code> モジュール &mdash; 直接の動機</h3>
+    <p>本プロジェクトが静的ビルドとして配布されている根本の理
+        由がこれです。</p>
+    <p><a href="https://github.com/x-cmd/x-cmd">x-cmd</a> の
+        <code>zuz</code> モジュールは書庫ファイルのフォーマット
+        を自動判別し、拡張子に応じて適切なツールで透過的に圧縮
+        / 展開します。<code>tar</code>、<code>tar.gz</code>、
+        <code>tar.bz2</code>、<code>tar.xz</code>、
+        <code>zip</code>、<code>7z</code>、<code>rar</code>、
+        <code>lha</code> 等に対応します。ただし、1 つのアーキ
+        テクチャ上の鉄則があります：</p>
+    <blockquote>
+        <p><b>フォーマット専用のツールを同梱しない。常にシステム
+            インストール済みのバイナリを起動する。</b></p>
+    </blockquote>
+    <p>この問題は
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a>（2024 年 12 月）に上がりました：ユーザが
+        <code>zuz</code> に LHA/LZH サポートを求めているが、
+        x-cmd が現状サポートするどの可搬パッケージシステムも
+        <code>lha</code> を提供していない。スレッドは次のよう
+        に進みます：</p>
+    <ul>
+        <li>2024 年 12 月：メンテナ（edwinjhlee）が、v0.5.1 で
+            7z ベースの<em>展開</em>フォールバックを出荷したと
+            述べる（ユーザが <code>lha</code> または
+            <code>lhasa</code> をインストール済みであれば動作）。</li>
+        <li>2025 年 1 月：パッケージ化された <code>lha</code> モ
+            ジュールが出るまで、<code>x install lha</code> を
+            暫定策として案内。</li>
+        <li>2026 年 7 月：メンテナが
+            <a href="https://github.com/x-cmd/x-cmd/issues/131#issuecomment-4968653094">落とし所
+            </a>を示す：<code>zuz</code> が<em>本リポジトリ</em>
+            のリリース成果物を惰性ダウンロードし、
+            <code>lha</code> 未インストールのシステムでも
+            <code>x uz foo.lha</code> が動くようにする。</li>
+    </ul>
+    <p>つまり、<code>zuz</code> ユーザにとっての主な導入経路
+        は：</p>
+    <pre><code>x uz foo.lha
+# zuz が .lha を検出、PATH に lha がない、
+# フォールバック：eget ljh-sh/lha --to ~/.local/bin/lha
+# その後：~/.local/bin/lha x foo.lha</code></pre>
+    <p>Homebrew ではない。apt でもない。各ディストロのパッケー
+        ジでもない。<em>既定の静的インストール</em> &mdash; 特権
+        インストール不要、tap 不要、ビルドチェーン不要、x-cmd
+        サポートのすべてのプラットフォームで動く。このプロジェ
+        クトが存在する理由は、まさにこの「既定の静的インス
+        トール能力」を提供することだけです。</p>
+    <p>x-cmd ユーザで、<code>lha</code> の入っていない環境で
+        <code>x uz foo.lha</code> を実行したなら、あなたはこの
+        バイナリを使っています。x-cmd を使ったことがなく、単
+        に <code>.lzh</code> を開きたいだけの場合でも、このバ
+        イナリを使っています &mdash; 同じ成果物、同じリリース、
+        同じ vendored ソース。</p>
+
+    <h3>4.4 このプロジェクトが「無いもの」</h3>
+    <p>境界を正直に：</p>
+    <ul>
+        <li><b>ではない</b>アルゴリズムのアップグレード。tANS
+            移植も、LZMA-lha 変種も、LZH 向け tANS 形式も、こ
+            こには存在しない。Vendored された 1.14i はそのまま
+            維持する。</li>
+        <li><b>ではない</b><code>tar.gz</code>、<code>zip</code>、
+            <code>zstd</code> の置き換え。<a href="perf.html">ベンチ</a>
+            がどの場面でどれを使うべきかを明示している。</li>
+        <li><b>ではない</b>LZH 復権の合図。このバイナリが存在す
+            る唯一の理由は、フォーマット自体の長寿；あなたのワー
+            クフローが 2010 年以降に始まったなら、
+            <code>.lzh</code> は手元にはないはず。</li>
+    </ul>
+</section>
+
+<section id="summary">
+    <h2>5. まとめ</h2>
+    <p>経験則：</p>
+    <table>
+    <thead>
+    <tr><th>気にする軸が&hellip;</th><th>選ぶもの</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>1994 年の <code>.lzh</code> を開く</td>
+            <td><b><code>lha</code></b>（このバイナリ）</td>
+        </tr>
+        <tr>
+            <td>クローズドシステムでの単一静的バイナリ</td>
+            <td><b><code>lha</code></b>（~150 KB、ゼロ依存）</td>
+        </tr>
+        <tr>
+            <td><code>zuz</code> 風の自動判別</td>
+            <td><b><code>lha</code></b>（ljh-sh/lha から惰性取得）</td>
+        </tr>
+        <tr>
+            <td>ロングテール CDN で最小サイズ</td>
+            <td><code>tar.gz -9</code> または <code>zstd</code></td>
+        </tr>
+        <tr>
+            <td>マイクロ秒オーダーの展開</td>
+            <td><code>lz4</code> または <code>zstd</code></td>
+        </tr>
+    </tbody>
+    </table>
+    <p>このページが存在する理由は、「このバイナリとは何か」
+        と「なぜ存在するのか」を 1 か所にまとめるため &
+        mdash; <a href="../index.html#history">歴史</a>、
+        <a href="perf.html">ベンチ</a>、
+        <a href="build-audit.html">ビルド監査</a>、
+        <a href="faq.html">FAQ</a> に分散させないため。</p>
+</section>
+
+<footer>
+    <p>
+        本ページは
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a> の
+        GitHub Pages サイトの一部です。出典：1990 年の LZH フォ
+        ーマット仕様（吉崎英明）；
+        <a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        ソースツリー (<code>86094cb</code>)；
+        <a href="perf.html">効率ベンチ</a>；
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        zuz issue #131</a>（静的バイナリの動機）。本文はパブ
+        リックドメインに帰属します。
+    </p>
+</footer>
+
+</main>
+
+  <script src="../lang-router.js" defer></script>
+
+</body>
+</html>

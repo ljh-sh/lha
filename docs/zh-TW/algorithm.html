@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lha — LZH 演算法：歷史、效能、當前定位</title>
+<meta name="description" content="LZH 系列壓縮演算法（LZARI、LZHUF）：1990 年代的 LZ77 + 動態 Huffman 設計，為 286 上的快速解壓縮而調校。為什麼在 2026 年 vendored 的源碼仍原樣釋出、為什麼單一靜態二進位檔才是大多數人想要的、以及本專案如何成為 x-cmd zuz 模組預設使用的靜態建置。">
+<link rel="stylesheet" href="../styles.css">
+<script src="../lang-router-early.js"></script>
+</head>
+<body>
+
+<main class="wrap">
+
+<a href="#main" class="skip">跳至內容</a>
+
+<div class="lang-switch">
+    <a href="../algorithm.html">en</a> ·
+    <a href="../zh-CN/algorithm.html">zh-CN</a> ·
+    <strong>zh-TW</strong> ·
+    <a href="../ja/algorithm.html">ja</a> ·
+    <a href="faq.html">faq</a> ·
+    <a href="security.html">資安</a> ·
+    <a href="build-audit.html">建置稽核</a> ·
+    <a href="../index.html">↑ 站台</a>
+</div>
+
+<section class="hero">
+    <h1>演算法 &mdash; 歷史、效能、當前定位</h1>
+    <p class="tagline"><code>lha</code> 攜帶的是 <b>LZHUF</b>：
+        1990 年代的 LZ77 + 動態 Huffman，為「1 MiB 記憶體的 286
+        上的快速解壓縮」而設計，寫在 SIMD 還沒出現的年代。本
+        頁說的是這個演算法、它在 2026 年付出的代價、以及為什
+        麼一份<em>外部</em>專案的單一靜態二進位檔，仍然會以它為
+        底座。</p>
+    <p class="meta">
+        <a href="#algorithm">演算法</a> ·
+        <a href="#history">歷史</a> ·
+        <a href="#perf">效能</a> ·
+        <a href="#today">當前</a> ·
+        <a href="#summary">總結</a>
+    </p>
+</section>
+
+<aside class="tldr" id="tldr">
+    <p><b>TL;DR。</b><code>lha</code> 攜帶 LZHUF：1990 年代的 LZ77
+        + 動態 Huffman，為「1 MiB 記憶體的 286 上的快速解壓縮」
+        而設計，寫在 SIMD 還沒出現的年代。今天它在三種情境裡
+        都是正確答案：（a）解壓縮一個 35 年前的
+        <code>.lzh</code> 封存檔；（b）需要一份零系統相依性的單一
+        靜態二進位檔用於 CI 產物或 CDN 下載；（c）把格式自動
+        辨識接入像 x-cmd 的
+        <a href="https://github.com/x-cmd/x-cmd">zuz</a> 模組
+        &mdash; 而這正是本倉儲存在的理由（見
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a>：維護者讓 <code>zuz</code> 惰性下載本倉
+        儲的 release 產物來收尾）。解壓縮是位元串列的；壓縮比
+        deflate 快 ~2.2×，代價是 ~5 % 壓縮率。繼續讀，看世系、
+        看基準、看這個格式在 2026 年仍佔據的位置。</p>
+</aside>
+
+<section id="algorithm">
+    <h2>1. 演算法</h2>
+    <p>lha 家族裡每一種壓縮方式（<code>-lh0-</code> 到
+        <code>-lh7-</code>，外加 <code>-lhd-</code> 目錄標頭）都
+        是同一個兩段式結構：</p>
+    <ol>
+        <li><b>LZ77 風格的字串比對</b>。在輸入裡找重複的位元
+            組序列，並發出形如 <code>(distance, length)</code>
+            的回引用，代替重複位元組。所有 LZARI / LZHUF /
+            ZIP / gzip / zstd / lz4 / 7-zip 裡的「LZ」都是同一
+            個想法，源頭是 Lempel &amp; Ziv 1977 年的論文。</li>
+        <li><b>熵編碼器</b>，作用在字面值與回引用上。這是各家
+            不同的部分：
+            <ul>
+                <li><code>-lh1-</code> &mdash; <b>LZARI</b>：
+                    LZ77 + 算術編碼（Okumura，1988）。</li>
+                <li><code>-lh5-</code> &mdash; <b>LZHUF</b>：
+                    LZ77 + 動態 Huffman（Tagawa，1990）。預設方式。</li>
+                <li><code>-lh4-</code>、<code>-lh6-</code>、
+                    <code>-lh7-</code>、<code>-lzs-</code> &mdash;
+                    熵後端的實驗性改良，或為相容性而保留的未使
+                    用編碼。</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h3>靜態 vs 動態 Huffman</h3>
+    <p>LZHUF 用的是<em>靜態</em> Huffman 表，每個區塊重算一次，
+        輸入裡每幾 KB 重新推導一次。這個設計抉擇決定了整組取捨：</p>
+    <ul>
+        <li><b>好處。</b>編碼器不必把 Huffman 表隨位元流一起送出。
+            解碼器已知每個區塊的表，在一個緊湊的內層迴圈裡解
+            碼，不必在每個區塊開頭載入新表。</li>
+        <li><b>代價。</b>當局部統計量變化（標頭區塊 &mdash;&gt;
+            結構化文字主體 &mdash;&gt; 二進位區塊）時，靜態表
+            是局部次優的。<em>動態</em> Huffman（deflate 的預設，
+            gzip 用的）把表跟資料一起攜帶並自適應。這就是
+            <a href="perf.html">基準</a>裡 ~5 % 壓縮率差距的來源。</li>
+    </ul>
+
+    <h3>位元串列解碼迴圈（以及為什麼它慢）</h3>
+    <p>LZHUF 的解碼迴圈<em>逐位元</em>讀入位元流，每次透過一
+        個小型 2× 表查找下一個符號。這在本質上就是串列的：
+        位元 <i>n+1</i> 必須在位元 <i>n</i> 查表完成後才能讀。</p>
+    <p>ANSI C 源碼就是直白的 1995-2003 年程式碼，沒有 SIMD
+        intrinsic：</p>
+    <pre><code>$ grep -nEi '(mmx|sse|avx|simd|__m128i|__builtin_ia32)' upstream/lha/src/*.c
+$                       # 零命中</code></pre>
+    <p>把 LZ77 的 length-distance 複製向量化，可以拿到大約
+        1.5&ndash;2× 的解壓縮速度；位元串列的 Huffman 迴圈就是
+        天花板。要在解壓縮上更快，必須換演算法，不能再微觀最佳
+        化 LZHUF（更長的版本見
+        <a href="perf.html#lzhuf-why-slow">基準頁</a>）。</p>
+</section>
+
+<section id="history">
+    <h2>2. 歷史 &mdash; 世系</h2>
+    <p><a href="../index.html#history">首頁的歷史章節</a>對 1988-2022
+        這段弧線講得很詳細；緊湊版：</p>
+    <ul>
+        <li><b>1977 &mdash; LZ77。</b>Abraham Lempel 與 Jacob Ziv
+            在 <i>IEEE Transactions on Information Theory</i> 發
+            表 <i>A Universal Algorithm for Sequential Data
+            Compression</i>。滑動視窗 + 回引用這個思路，定義了
+            之後每一種現代歸檔器。</li>
+
+        <li><b>1988 &mdash; LZARI。</b>奧村晴彥發表對 CPU 友好的
+            LZ77 + 算術編碼變體。LHA 借用的、面向 286 的算術
+            編碼器。</li>
+
+        <li><b>1988&ndash;1989 &mdash; LHarc。</b>吉崎英明
+            （Y.Tagawa）把 LZARI 包成 MS-DOS 上的封存格式。日
+            本第一種廣泛使用的封存格式。</li>
+
+        <li><b>1990 &mdash; LZHUF，本專案分發的格式。</b>Tagawa 把
+            LZARI 改良為 LZ77 + 動態 Huffman，把格式從 LHarc 改
+            名為 LHA。壓縮方式後綴的慣例（封存檔名裡的
+            <code>-lh5-</code>）就此誕生，並沿用至今。</li>
+
+        <li><b>1991&ndash;1993 &mdash; LHA for UNIX。</b>大木優移
+            植到 UNIX；綿貫和彥重寫程式碼庫。這份 canonical C
+            源碼，30 年來一直被 vendored。</li>
+
+        <li><b>1993 &mdash; PKZIP 2.0 + Info-ZIP</b>在西方 PC 上
+            取代 LHA。</li>
+
+        <li><b>1994&ndash;2010 &mdash; <code>.lzh</code> 在日本仍然火。</b>
+            主要網站用 LZH 分發；Windows 自解壓大量使用 LHA；
+            2ch 風格的電子佈告欄交換 LZH 一直延續到 2000 年代
+            後期。<code>.lzh</code> 是日本 2000 年代初之前主流
+            的分發格式。</li>
+
+        <li><b>2022 &mdash; autoconf 復活。</b>GitHub 使用者
+            <a href="https://github.com/jca02266/lha">jca02266</a>
+            接手沉寂的程式碼樹，加入現代 autotools 建置，打出
+            <b>LHa for UNIX 1.14i-ac20220213</b> 標籤。這就是本倉
+            儲在 commit <code>86094cb</code> 處 vendored 的來源。</li>
+
+        <li><b>2026 &mdash; ljh-sh/lha。</b>Vendors
+            <code>jca02266/lha@86094cb</code>；為每個主流平台產
+            出單一靜態二進位檔。今天還存在的理由在 §4。</li>
+    </ul>
+</section>
+
+<section id="perf">
+    <h2>3. 效能 &mdash; 三條軸</h2>
+    <p><a href="perf.html">基準</a>資料來自 1.83 MiB 的 kenlm 原始
+        碼語料，每個 cell 跑 5 次，取中位數 ± 樣本標準差。要點：</p>
+    <table>
+    <thead>
+    <tr><th>工具</th><th>等級</th><th>壓縮</th>
+        <th>解壓縮</th><th>壓縮率</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><b>lha</b></td><td><code>-lh5-</code>（預設）</td>
+            <td><b>~50 ms</b></td><td>~40 ms</td>
+            <td>29.93 %</td></tr>
+        <tr><td>zip</td><td><code>-6</code>（預設）</td>
+            <td>~62 ms</td><td>~3 ms</td>
+            <td>31.01 %</td></tr>
+        <tr><td>tar（不壓縮）</td><td>&mdash;</td>
+            <td>~80 ms</td><td>~82 ms</td>
+            <td>149.55 %</td></tr>
+        <tr><td>tar.gz</td><td><code>-6</code>（預設）</td>
+            <td>~210 ms</td><td>~5 ms</td>
+            <td><b>24.93 %</b></td></tr>
+    </tbody>
+    </table>
+
+    <h3>三條值得記的觀察</h3>
+    <ol>
+        <li><b>壓縮速度。</b><code>lha</code> 排在
+            <code>zip</code>（最快，領先 ~22 %）和
+            <code>tar.gz</code>（最慢，慢 ~4×）之間。對於「壓縮
+            後留存」類型負載（建置產物留存、鏡像站），<code>lha</code>
+            是非平凡壓縮器裡最便宜的，仍然比裸流傳得快 ~3×。</li>
+        <li><b>解壓縮速度。</b><code>zip</code> 和
+            <code>tar.gz</code> 解壓縮在個位數毫秒；<code>lha</code>
+            要 ~40 ms。位元串列 Huffman 迴圈就是天花板。絕對時
+            間仍然很小 &mdash; 遠低於任何 CDN 的網路 RTT 雜訊。
+            在 CDN 上從鏡像重新解壓縮 100 次的工作負載，被 HTTP
+            延遲支配，而不是演算法選擇。</li>
+        <li><b>壓縮率。</b><code>lha</code> 比
+            <code>deflate</code> 高 ~5 個百分點（1.8 MiB 源碼上多
+            ~91 KB）。這是 1990 年的刻意取捨：調校目標是 286
+            上解壓縮快，而不是 2020 年工作站上壓得最緊。</li>
+    </ol>
+
+    <h3>哪裡輸給現代演算法 &mdash; 哪裡不輸</h3>
+    <ul>
+        <li>✗ 壓縮率上，<code>deflate</code> 與
+            <code>zstd</code> 贏 5&ndash;15 個百分點。</li>
+        <li>✗ 解壓縮速度上，<code>zstd</code> 比
+            <code>lha</code> 快 ~5&ndash;10×；<code>lz4</code>
+            再快 ~3&ndash;5×。</li>
+        <li>✓ 靜態二進位檔體積 + 零相依性分發上，
+            <code>lha</code> 完勝：~150 KB，在任何有核心的地方
+            都能跑。</li>
+        <li>✓ 「我手上有一個 1994 年遊戲的封存檔，其他都打不開」
+            上，<code>lha</code> 預設就贏 &mdash; 因為只有它能
+            打開。</li>
+        <li>✓ 長期封存穩定性上，<code>lha</code> 贏在它的 35
+            年格式規格今天還在被實作，還在保持讀相容。</li>
+    </ul>
+    <p><a href="perf.html#deeper">基準頁的「深入」章節</a>講演
+        算法內部原因。短版本：lha 是 1990 年的設計，到今天沒變過，
+        速度天花板就是演算法本身，不是實作。</p>
+</section>
+
+<section id="today">
+    <h2>4. 當前定位 &mdash; 為什麼這個專案在 2026 年還存在</h2>
+    <p>被 vendored 的 <code>jca02266/lha@86094cb</code> 源碼，
+        是 1995-2003 年代的 ANSI C 程式碼庫，2022 年只經歷過一次
+        現代化（autotools）。ljh-sh/lha 從那裡出發只做一件事：
+        <b>為每個平台產出一個 <code>lha</code> 的單一靜態二進位
+        檔，讓使用者不需要編譯器</b>。</p>
+    <p>2026 年這個命題有三類具體需求情境：</p>
+
+    <h3>4.1 老 <code>.lzh</code> 的解壓縮</h3>
+    <p>最直觀的情況：某人手上有 1994 年的遊戲補丁、2ch 風格
+        的 BBS 歷史附件、或 2000 年代的日本開放原始碼封存檔。
+        現代工具都打不開 <code>.lzh</code>。裝上
+        <code>x eget use lha</code>，兩秒鐘就到
+        <code>~/.local/bin</code>，再
+        <code>lha x foo.lzh</code> 就能解。少了這個二進位檔，
+        使用者只能裝編譯器、找 1990 年代的 autoconf 補丁、然
+        後祈禱他們的 libc 還沒把這個建置搞壞。</p>
+
+    <h3>4.2 單檔靜態二進位檔用於 CI 產物 / CDN 分發</h3>
+    <p><code>lha</code> 從任何源碼樹產出一個 <code>.lzh</code>
+        封存檔，耗時 ~50&ndash;80 ms，主機上零系統相依性。對
+        於 CI 產物發布者（任何把建置結果打包下載的人來說），意
+        思是：</p>
+    <ul>
+        <li>不用把 <code>libz</code>、<code>libcurl</code>、
+            <code>libiconv</code>、<code>libssl</code> 拖進精簡
+            容器。</li>
+        <li>一個 ~150 KB 的二進位檔，簽名、分發。</li>
+        <li>解壓縮路徑在 Windows、macOS、Linux、BSD 和任何嵌入
+            式 Linux 上都成立 &mdash; 因為二進位檔從
+            <code>~/.local/bin</code> 跑，不需要安裝到系統。</li>
+    </ul>
+    <p>這就是 ljh-sh 在各專案裡都採用的「靜態二進位檔分發慣例」
+        （kenlm、upxz、現在的 lha）。具體管線可看
+        <a href="build-audit.html">建置稽核</a>。</p>
+
+    <h3>4.3 x-cmd 的 <code>zuz</code> 模組 &mdash; 直接動機</h3>
+    <p>這是本專案以靜態建置形式分發的根本理由。</p>
+    <p><a href="https://github.com/x-cmd/x-cmd">x-cmd</a> 的
+        <code>zuz</code> 模組對封存檔做格式自動辨識：按副檔名選工
+        具，透明地解壓縮或壓縮。它支援 <code>tar</code>、
+        <code>tar.gz</code>、<code>tar.bz2</code>、<code>tar.xz</code>、
+        <code>zip</code>、<code>7z</code>、<code>rar</code>、
+        <code>lha</code> 等。但它有一條架構鐵律：</p>
+    <blockquote>
+        <p><b>絕不內嵌格式專用的工具。永遠呼叫系統已安裝的
+            二進位檔。</b></p>
+    </blockquote>
+    <p>問題落在 <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        issue #131</a>（2024 年 12 月）：某個使用者希望
+        <code>zuz</code> 支援 LHA/LZH，但 x-cmd 當前支援的所有
+        可攜式套件管理程式都不內建 <code>lha</code>。討論線索
+        如下：</p>
+    <ul>
+        <li>2024 年 12 月：維護者（edwinjhlee）指出 v0.5.1 已
+            提供了基於 7z 的<em>解壓縮</em>回退（只要使用者裝
+            了 <code>lha</code> 或 <code>lhasa</code> 就能跑）。</li>
+        <li>2025 年 1 月：維護者讓使用者用
+            <code>x install lha</code> 作為權宜路徑，直到出現
+            打包的 <code>lha</code> 模組。</li>
+        <li>2026 年 7 月：維護者
+            <a href="https://github.com/x-cmd/x-cmd/issues/131#issuecomment-4968653094">收尾</a>：
+            <code>zuz</code> 將惰性下載<em>本倉儲</em>的 release
+            產物，這樣 <code>x uz foo.lha</code> 在任何預先沒
+            裝 <code>lha</code> 的系統上都能跑。</li>
+    </ul>
+    <p>也就是說，<code>zuz</code> 使用者的主要安裝路徑是：</p>
+    <pre><code>x uz foo.lha
+# zuz 偵測到 .lha，發現 PATH 裡沒有 lha，
+# 回退到：eget ljh-sh/lha --to ~/.local/bin/lha
+# 然後：~/.local/bin/lha x foo.lha</code></pre>
+    <p>不是 Homebrew。不是 apt。不是各發行版的套件。一個<em>預
+        設的靜態安裝</em>，不需要特權安裝、不需要 tap、不需要建
+        置鏈、在 x-cmd 支援的每個平台上都能用。本倉儲存在的全部
+        理由，就是為它提供這一份「預設靜態安裝能力」。</p>
+    <p>如果你是 x-cmd 使用者，在一台沒裝 <code>lha</code> 的系統
+        上 <code>x uz foo.lha</code>，你就是在用這個二進位檔。
+        如果你從來沒用過 x-cmd，只是要打開一個
+        <code>.lzh</code>，你也在用這個二進位檔 &mdash; 同一份
+        產物、同一個 release、同一個被 vendored 的源碼。</p>
+
+    <h3>4.4 這個專案「不是」什麼</h3>
+    <p>老實講清楚邊界：</p>
+    <ul>
+        <li><b>不是</b>演算法升級。沒有 tANS 移植、沒有
+            LZMA-lha 變體、沒有面向 LZH 的 tANS 格式。Vendored
+            的 1.14i 保持原樣。</li>
+        <li><b>不是</b><code>tar.gz</code>、<code>zip</code>、
+            <code>zstd</code> 的替代品。<a href="perf.html">基準</a>
+            說得很清楚，何時該選哪個。</li>
+        <li><b>不是</b>LZH 捲土重來的訊號。這個二進位檔存在的
+            唯一理由是格式本身的長壽；如果你的工作流是 2010
+            年之後開始的，你多半沒有 <code>.lzh</code> 檔案。</li>
+    </ul>
+</section>
+
+<section id="summary">
+    <h2>5. 總結</h2>
+    <p>想要一條經驗法則：</p>
+    <table>
+    <thead>
+    <tr><th>如果你在意&hellip;</th><th>就選</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>打開一個 1994 年的 <code>.lzh</code></td>
+            <td><b><code>lha</code></b>（本專案的二進位檔）</td>
+        </tr>
+        <tr>
+            <td>封閉系統上的單一靜態二進位檔</td>
+            <td><b><code>lha</code></b>（~150 KB，零相依性）</td>
+        </tr>
+        <tr>
+            <td>類似 <code>zuz</code> 的格式自動辨識</td>
+            <td><b><code>lha</code></b>（惰性從 ljh-sh/lha 拉）</td>
+        </tr>
+        <tr>
+            <td>長尾 CDN 上最小的產物</td>
+            <td><code>tar.gz -9</code> 或 <code>zstd</code></td>
+        </tr>
+        <tr>
+            <td>微秒級解壓縮</td>
+            <td><code>lz4</code> 或 <code>zstd</code></td>
+        </tr>
+    </tbody>
+    </table>
+    <p>本頁存在的理由是：「這個二進位檔是什麼」和「為什麼它
+        存在」值得集中在一個地方，而不是被
+        <a href="../index.html#history">歷史</a>、
+        <a href="perf.html">基準</a>、<a href="build-audit.html">建
+        置稽核</a>、<a href="faq.html">FAQ</a> 各頁瓜分。</p>
+</section>
+
+<footer>
+    <p>
+        本頁是
+        <a href="https://github.com/ljh-sh/lha">ljh-sh/lha</a> GitHub
+        Pages 站台的一部分。資料來源：1990 年 LZH 格式規格
+        （吉崎英明）；<a href="https://github.com/jca02266/lha">jca02266/lha</a>
+        源碼樹（<code>86094cb</code>）；<a href="perf.html">效率基準</a>；
+        <a href="https://github.com/x-cmd/x-cmd/issues/131">x-cmd
+        zuz issue #131</a>（靜態二進位檔動機）。本頁文字屬公領域。
+    </p>
+</footer>
+
+</main>
+
+  <script src="../lang-router.js" defer></script>
+
+</body>
+</html>
