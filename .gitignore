@@ -1,0 +1,43 @@
+# --- ljh-sh/lha dist layer ---
+/build/
+/dist/
+*.tar.gz
+*.tar.gz.sha256
+*.zip
+*.zip.sha256
+*.tgz
+
+# --- vendored upstream build outputs (defense-in-depth; attributes alone
+#     keep these out, but ignore helps anyone who runs configure in-tree) ---
+upstream/lha/aclocal.m4
+upstream/lha/autom4te.cache/
+upstream/lha/configure
+upstream/lha/config.h
+upstream/lha/config.h.in
+upstream/lha/config.log
+upstream/lha/config.status
+upstream/lha/Makefile
+upstream/lha/Makefile.in
+upstream/lha/src/Makefile
+upstream/lha/src/Makefile.in
+upstream/lha/src/config.h
+upstream/lha/src/.deps/
+upstream/lha/src/.libs/
+upstream/lha/src/*.o
+upstream/lha/src/*.lo
+upstream/lha/src/lha
+upstream/lha/man/Makefile
+upstream/lha/man/Makefile.in
+upstream/lha/olddoc/Makefile
+upstream/lha/olddoc/Makefile.in
+upstream/lha/tests/Makefile
+upstream/lha/tests/Makefile.in
+upstream/lha/tests/lha-test
+upstream/lha/tests/*.lzh.out/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
