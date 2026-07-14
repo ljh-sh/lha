@@ -57,15 +57,6 @@
         年におけるこのフォーマットの居場所を見ていきます。</p>
 </aside>
 
-    <aside class="tldr" id="usage">
-        <p><b>使い方。</b>4つのコマンド &mdash; 圧縮、展開、一覧、出力：</p>
-        <pre><code>  lha c archive.lzh file1 file2   # 圧縮
-      lha x archive.lzh               # 展開
-      lha l archive.lzh               # 一覧（ls）
-      lha p archive.lzh file          # 標準出力へ表示（cat）</code></pre>
-        <p class="cpu-note">インストール：<code>x eget use lha</code> &middot; 静的バイナリ，~150 KB，依存なし</p>
-    </aside>
-
 <section id="algorithm">
     <h2>1. アルゴリズム</h2>
     <p>lha ファミリーの各圧縮方式（<code>-lh0-</code>～
@@ -128,7 +119,18 @@ $                       # ヒットなし</code></pre>
         ります（詳しくは <a href="perf.html#lzhuf-why-slow">ベンチページ</a>）。</p>
 </section>
 
-<section id="history">
+
+
+    <aside class="tldr" id="usage">
+    <p><b>使い方。</b>4つのコマンド &mdash; 圧縮、展開、一覧、出力：</p>
+    <pre><code>  lha c archive.lzh file1 file2   # 圧縮
+  lha x archive.lzh               # 展開
+  lha l archive.lzh               # 一覧（ls）
+  lha p archive.lzh file          # 標準出力へ表示（cat）</code></pre>
+    <p class="cpu-note">インストール：<code>x eget use lha</code> &middot; 静的バイナリ，~150 KB，依存なし</p>
+</aside>
+
+    <section id="history">
     <h2>2. 歴史 &mdash; 系譜</h2>
     <p><a href="../index.html#history">ホームページの歴史セクション</a>
         が 1988-2022 の弧を詳しく語っているので、ここでは圧縮版

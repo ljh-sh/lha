@@ -46,15 +46,6 @@
         缓解（如果有的话）、以及一行修复方案。</p>
 </aside>
 
-    <aside class="tldr" id="usage">
-        <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
-        <pre><code>  lha c archive.lzh file1 file2   # 压缩
-      lha x archive.lzh               # 解压
-      lha l archive.lzh               # 列表（ls）
-      lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
-        <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
-    </aside>
-
 <section id="toolchain">
     <h2>1. 构建工具链风险</h2>
     <p>lha 源码用 GNU autotools。发布二进制在
@@ -347,7 +338,18 @@ git ls-remote https://github.com/jca02266/lha.git 86094cb
     </ul>
 </section>
 
-<footer>
+
+
+    <aside class="tldr" id="usage">
+    <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
+    <pre><code>  lha c archive.lzh file1 file2   # 压缩
+  lha x archive.lzh               # 解压
+  lha l archive.lzh               # 列表（ls）
+  lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
+    <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
+</aside>
+
+    <footer>
     <p>
         本审计在 ljh-sh/lha 构建工具链当时的 <code>main</code>
         上完成。资料来源：<a href="security.html">5 维源码审计</a>

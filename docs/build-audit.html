@@ -49,15 +49,6 @@
         decided to harden the chain.</p>
 </aside>
 
-    <aside class="tldr" id="usage">
-        <p><b>Usage.</b> Four commands &mdash; compress, decompress, list, print:</p>
-        <pre><code>  lha c archive.lzh file1 file2   # compress
-      lha x archive.lzh               # decompress / extract
-      lha l archive.lzh               # list (ls)
-      lha p archive.lzh file          # print to stdout (cat)</code></pre>
-        <p class="cpu-note">install: <code>x eget use lha</code> &middot; static binary, ~150 KB, zero deps</p>
-    </aside>
-
 <section id="toolchain">
     <h2>1. Build toolchain risks</h2>
     <p>The lha source uses GNU autotools. The release binary is
@@ -382,7 +373,18 @@ git ls-remote https://github.com/jca02266/lha.git 86094cb
     </ul>
 </section>
 
-<footer>
+
+
+    <aside class="tldr" id="usage">
+    <p><b>Usage.</b> Four commands &mdash; compress, decompress, list, print:</p>
+    <pre><code>  lha c archive.lzh file1 file2   # compress
+  lha x archive.lzh               # decompress / extract
+  lha l archive.lzh               # list (ls)
+  lha p archive.lzh file          # print to stdout (cat)</code></pre>
+    <p class="cpu-note">install: <code>x eget use lha</code> &middot; static binary, ~150 KB, zero deps</p>
+</aside>
+
+    <footer>
     <p>
         This audit was done on the ljh-sh/lha build toolchain as
         of <code>main</code> at the time of the FAQ. Sources:

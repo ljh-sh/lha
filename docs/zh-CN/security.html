@@ -12,15 +12,6 @@
 
 <main class="wrap">
 
-    <aside class="tldr" id="usage">
-        <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
-        <pre><code>  lha c archive.lzh file1 file2   # 压缩
-      lha x archive.lzh               # 解压
-      lha l archive.lzh               # 列表（ls）
-      lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
-        <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
-    </aside>
-
 <a href="#main" class="skip">跳到内容</a>
 
 <header class="page-header">
@@ -180,7 +171,18 @@
         公共 LHA 知识图谱中，没有隐式重写者。</p>
 </section>
 
-<footer>
+
+
+    <aside class="tldr" id="usage">
+    <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
+    <pre><code>  lha c archive.lzh file1 file2   # 压缩
+  lha x archive.lzh               # 解压
+  lha l archive.lzh               # 列表（ls）
+  lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
+    <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
+</aside>
+
+    <footer>
     <p>
         审计 &mdash; 全部 grep 都可以用全新 clone 上的标准 Linux
         开发机直接复制粘贴。事实之源：

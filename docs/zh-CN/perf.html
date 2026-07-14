@@ -12,15 +12,6 @@
 
 <main class="wrap">
 
-    <aside class="tldr" id="usage">
-        <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
-        <pre><code>  lha c archive.lzh file1 file2   # 压缩
-      lha x archive.lzh               # 解压
-      lha l archive.lzh               # 列表（ls）
-      lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
-        <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
-    </aside>
-
 <a href="#main" class="skip">跳到内容</a>
 
 <header class="page-header">
@@ -334,7 +325,18 @@ done</code></pre>
         <code>(tar.gz → lha → zip → tar)</code> 是稳定的。</p>
 </section>
 
-<footer>
+
+
+    <aside class="tldr" id="usage">
+    <p><b>使用方法。</b>四组命令 &mdash; 压缩、解压、列表、打印：</p>
+    <pre><code>  lha c archive.lzh file1 file2   # 压缩
+  lha x archive.lzh               # 解压
+  lha l archive.lzh               # 列表（ls）
+  lha p archive.lzh file          # 打印到标准输出（cat）</code></pre>
+    <p class="cpu-note">安装：<code>x eget use lha</code> &middot; 静态二进制，~150 KB，零依赖</p>
+</aside>
+
+    <footer>
     <p>
         语料：kenlm 上游源码树，1.83 MiB / 304 个文件。
         硬件：Apple M 系列，原生 lha 编译产物
