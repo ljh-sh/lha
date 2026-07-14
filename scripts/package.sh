@@ -53,18 +53,20 @@ EOF
 
 ( cd "$DIST" && tar czf "lha-$TARGET.tar.gz" "lha-$TARGET" )
 
-# SHA256 — prefer coreutils sha256sum, fall back to shasum (macOS), fall
-# back to OpenSSL. Avoid BusyBox-only `sha256sum -c` (it lacks the
-# `--strict` flag we don't need but the path is identical to GNU on
-# Alpine where BusyBox replaces both).
+# SHA256 — emit basename-only so `sha256sum -c FILE.sha256` works from
+# any directory (the absolute CI-workspace path we'd otherwise get
+# breaks verification for users downloading individual archives).
+# Prefer coreutils sha256sum, then macOS shasum, then OpenSSL.
 ARCHIVE="$DIST/lha-$TARGET.tar.gz"
-if command -v sha256sum >/dev/null 2>&1; then
-	sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
-elif command -v shasum >/dev/null 2>&1; then
-	shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+if   command -v sha256sum >/dev/null 2>&1; then
+	HASH_CMD='sha256sum'
+elif command -v shasum     >/dev/null 2>&1; then
+	HASH_CMD='shasum -a 256'
 else
-	openssl dgst -sha256 -r "$ARCHIVE" > "$ARCHIVE.sha256"
+	HASH_CMD='openssl dgst -sha256 -r'
 fi
+( cd "$DIST" && $HASH_CMD "lha-$TARGET.tar.gz" \
+	| awk '{printf "%s  lha-'"$TARGET"'.tar.gz\n", $1}' ) > "$ARCHIVE.sha256"
 
 echo "==> $DIST/lha-$TARGET.tar.gz"
 echo "==> $DIST/lha-$TARGET.tar.gz.sha256"
