@@ -14,25 +14,9 @@ import re, sys
 from pathlib import Path
 
 # Per-language label sets for the section nav on each page type.
-# Index/homepage labels: short list of "off-site and primary-internal".
-INDEX_LABELS = {
-    'en':    [('Latest release',  'https://github.com/ljh-sh/lha/releases'),
-              ('Upstream',        'https://github.com/jca02266/lha'),
-              ('Build audit',     'build-audit.html'),
-              ('Algorithm',       'algorithm.html')],
-    'zh-CN': [('最新发布',         'https://github.com/ljh-sh/lha/releases'),
-              ('上游源码',         'https://github.com/jca02266/lha'),
-              ('构建审计',         'build-audit.html'),
-              ('算法',             'algorithm.html')],
-    'zh-TW': [('最新發佈',         'https://github.com/ljh-sh/lha/releases'),
-              ('上游原始碼',       'https://github.com/jca02266/lha'),
-              ('建置稽核',         'build-audit.html'),
-              ('演算法',           'algorithm.html')],
-    'ja':    [('最新リリース',     'https://github.com/ljh-sh/lha/releases'),
-              ('上流',             'https://github.com/jca02266/lha'),
-              ('ビルド監査',       'build-audit.html'),
-              ('アルゴリズム',     'algorithm.html')],
-}
+# All pages (including the homepage) use SECTION_LABELS.
+# INDEX_LABELS is retained but no longer wired in (kept around in case
+# we want a 4-item compact homepage nav later).
 
 # Sections for non-homepages, with per-language labels.
 SECTION_LABELS = {
@@ -64,8 +48,9 @@ def render_index_nav(lang_code, is_top_level):
 
 
 def render_section_nav(lang_code, current_file, is_top_level):
-    """Non-homepage section nav. The current section is rendered
-    as <strong>; home ('↑ home') gets <strong> on the homepage only."""
+    """Section nav used on EVERY page (including the homepage).
+    The current item is rendered as <strong>; the rest are <a href>.
+    For the homepage, 'home' is the active item — <strong>↑ 首页</strong>."""
     labels = SECTION_LABELS[lang_code]
     prefix = '' if is_top_level else '../'
     parts = []
@@ -78,7 +63,10 @@ def render_section_nav(lang_code, current_file, is_top_level):
             parts.append('<a href="' + href + '">' + label + '</a>')
     home_label = labels[5]
     home_href = prefix + 'index.html'
-    parts.append('<a href="' + home_href + '">' + home_label + '</a>')
+    if current_file == 'home':
+        parts.append('<strong>' + home_label + '</strong>')
+    else:
+        parts.append('<a href="' + home_href + '">' + home_label + '</a>')
     return ' · '.join(parts)
 
 
@@ -123,19 +111,19 @@ def refactor_file(path):
     html = path.read_text()
     lang = infer_lang(html)
     current = current_file_from_path(path)
+    # On the homepage, the "current section" is the home item — the
+    # section nav expects the literal stem 'home' to light up ↑ 首页.
+    if current == 'index':
+        section_current = 'home'
+    else:
+        section_current = current
     top = is_top_level_path(path)
 
-    # Homepage header: lang-switch only (no section-nav — the
-    # homepage already exposes its primary destinations through
-    # the existing meta row in the hero and the bottom nav strip).
-    if current == 'index':
-        header_inner = '<div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>'
-    else:
-        nav_inner = render_section_nav(lang, current, top)
-        header_inner = (
-            '<nav class="section-nav">' + nav_inner + '</nav>\n'
-            '    <div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>'
-        )
+    nav_inner = render_section_nav(lang, section_current, top)
+    header_inner = (
+        '<nav class="section-nav">' + nav_inner + '</nav>\n'
+        '    <div class="lang-switch">' + render_lang_switch(lang, current, top) + '</div>'
+    )
 
     new_header = (
         '<header class="page-header">\n'
