@@ -147,18 +147,23 @@ jobs:
       # Musl: the build target lives INSIDE the Alpine container (at
       # /w/build/src/lha) — the host path (${{ github.workspace }})
       # doesn't have it. Run the bench inside the same container.
+      # Uses an inline command file to avoid sh's parser splitting
+      # env-prefixed commands across line continuations.
       - name: Run N=5 bench (musl, inside Alpine)
         if: matrix.libc == 'musl'
-        run: >
-          docker run --rm --platform linux/${{ matrix.docker_arch }}
-          -v "$PWD":/w -w /w alpine:3.20 sh -c '
-          set -eu
-          apk add --no-cache bash coreutils
-          env BENCH_BIN=/w/build/src/lha
-              BENCH_N=5
-              BENCH_LABEL=${{ matrix.target }}
-              bash /w/scripts/bench.sh
-          ' 2>&1 | tee bench.txt
+        run: |
+          cat > /tmp/lha-bench-cmd.sh <<EOF
+          apk add --no-cache bash coreutils >/dev/null
+          BENCH_BIN=/w/build/src/lha \\
+            BENCH_N=5 \\
+            BENCH_LABEL=${{ matrix.target }} \\
+            bash /w/scripts/bench.sh
+          EOF
+          docker run --rm --platform linux/${{ matrix.docker_arch }} \
+            -v "$PWD":/w -w /w \
+            -v /tmp/lha-bench-cmd.sh:/tmp/bench-cmd.sh:ro \
+            alpine:3.20 sh -c 'sh /tmp/bench-cmd.sh' 2>&1 \
+            | tee bench.txt
         continue-on-error: true
 
       - name: Run N=5 bench (host)
