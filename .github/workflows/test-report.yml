@@ -152,11 +152,12 @@ jobs:
         run: >
           docker run --rm --platform linux/${{ matrix.docker_arch }}
           -v "$PWD":/w -w /w alpine:3.20 sh -c '
-          apk add --no-cache bash coreutils >/dev/null
-          && BENCH_BIN=/w/build/src/lha
-             BENCH_N=5
-             BENCH_LABEL=${{ matrix.target }}
-             bash /w/scripts/bench.sh
+          set -eu
+          apk add --no-cache bash coreutils
+          env BENCH_BIN=/w/build/src/lha
+              BENCH_N=5
+              BENCH_LABEL=${{ matrix.target }}
+              bash /w/scripts/bench.sh
           ' 2>&1 | tee bench.txt
         continue-on-error: true
 
