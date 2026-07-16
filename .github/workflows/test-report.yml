@@ -1,0 +1,294 @@
+name: lha test report
+
+# Manual-dispatch test-and-report workflow:
+#   1. Build the full 5-target matrix
+#   2. Run upstream `lha-test{1..19}` suite + 1 MiB / 32-file round-trips on each
+#   3. Run an N=5 micro-benchmark (c / x / l) on each
+#   4. Verify release assets (SHA256 + §2.a-bundle shape)
+#   5. Compose a markdown issue body and **create a GitHub issue** with it
+#
+# Distinct from `build-and-test.yml` (push/PR smoke gate) and
+# `release.yml` (tag-push publish): this one is on-demand, with a
+# richer output that's published as an issue (per-target PASS/FAIL,
+# perf numbers, bundle integrity — auditable from one URL).
+#
+# Inputs:
+#   release_tag — defaults to "latest"; override when reporting on a
+#                 specific version (the report's SHA-verification step
+#                 downloads the assets of this tag).
+#   issue_title — default '{tag} test report @ {short-sha} {date}'.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to verify against (default: latest)"
+        required: false
+        default: "latest"
+        type: string
+      issue_title:
+        description: "Override the issue title (default: auto)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------------
+  # per-target: build + smoke + bench → artifact
+  # ----------------------------------------------------------------
+  test:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-linux-musl,  runner: ubuntu-latest,    os: linux,   libc: musl, docker_arch: amd64 }
+          - { target: aarch64-linux-musl, runner: ubuntu-24.04-arm, os: linux,   libc: musl, docker_arch: arm64 }
+          - { target: x86_64-macos,       runner: macos-14,         os: macos                  }
+          - { target: aarch64-macos,      runner: macos-14,         os: macos                  }
+          - { target: x86_64-windows,     runner: windows-latest,   os: windows                }
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Linux gnu — needed for cross-checking; never used directly here)
+        if: matrix.libc == 'musl'
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
+
+      - name: Install deps (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          brew update
+          brew install autoconf automake libtool coreutils
+          # macOS BSD date lacks %N; gdate has it.
+          echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "/usr/local/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install deps (Windows MSYS2 + mingw64)
+        if: matrix.os == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git autoconf automake libtool
+            make base-devel
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv
+
+      # ---- build ----
+      - name: Build + smoke on Alpine (musl)
+        if: matrix.libc == 'musl'
+        run: >
+          docker run --rm --platform linux/${{ matrix.docker_arch }}
+          -v "$PWD":/w -w /w alpine:3.20 sh -c '
+          apk add --no-cache bash coreutils >/dev/null
+          && bash /w/scripts/build-alpine.sh
+          '
+        # smoke runs separately so its output is captured cleanly below.
+
+      - name: Build (macOS aarch64 — host)
+        if: matrix.target == 'aarch64-macos'
+        run: bash scripts/build.sh
+
+      - name: Build (macOS x86_64 — clang -arch x86_64)
+        if: matrix.target == 'x86_64-macos'
+        env:
+          LHA_TARGET_ARCH: x86_64
+          LHA_TARGET_OS: apple-darwin
+          LHA_OS_HINT: darwin
+        run: bash scripts/build.sh
+
+      - name: Build (Windows x86_64 — msys2 bash)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        env:
+          CPPFLAGS: '-include ${{ github.workspace }}/scripts/no-symlink.h'
+        run: bash scripts/build.sh
+
+      # ---- smoke (capture) ----
+      - name: Run upstream smoke + round-trip (musl)
+        if: matrix.libc == 'musl'
+        run: >
+          docker run --rm --platform linux/${{ matrix.docker_arch }}
+          -v "$PWD":/w -w /w alpine:3.20 sh -c '
+          apk add --no-cache bash >/dev/null
+          && bash /w/scripts/smoke.sh
+          ' 2>&1 | tee smoke.log
+        continue-on-error: true
+
+      - name: Run upstream smoke + round-trip (host)
+        if: matrix.os != 'windows' && matrix.libc != 'musl'
+        run: bash scripts/smoke.sh 2>&1 | tee smoke.log
+        continue-on-error: true
+
+      - name: Run smoke (Windows informational-only — /tmp hardcoded in lha upstream)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        continue-on-error: true
+        run: |
+          set +e
+          LHA="${{ github.workspace }}/build/src/lha.exe"
+          echo "==> Windows smoke is currently informational only." | tee smoke.log
+          echo "    Lha config hardcodes /tmp/lhXXXXXX which MSYS2 doesn't always expose." | tee -a smoke.log
+          ls -la "$LHA" | tee -a smoke.log || { echo "FAIL: binary missing" | tee -a smoke.log; exit 1; }
+          "$LHA" 2>&1 | head -3 | tee -a smoke.log || true
+          echo "smoke OK: informational-only" | tee -a smoke.log
+
+      # ---- bench (capture) ----
+      - name: Run N=5 bench (host)
+        if: matrix.os != 'windows'
+        run: |
+          BENCH_BIN="${{ github.workspace }}/build/src/lha"
+          BENCH_N=5 BENCH_LABEL="${{ matrix.target }}" \
+            bash scripts/bench.sh 2>&1 | tee bench.txt
+
+      - name: Run N=5 bench (Windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        continue-on-error: true
+        run: |
+          BENCH_BIN="${{ github.workspace }}/build/src/lha.exe"
+          BENCH_N=5 BENCH_LABEL="${{ matrix.target }}" \
+            bash scripts/bench.sh 2>&1 | tee bench.txt || echo "(bench failed on windows; OK)" > bench.txt
+
+      # ---- package so the artifact contains the actual archive too ----
+      - name: Package (Linux / macOS)
+        if: matrix.os != 'windows'
+        run: TARGET=${{ matrix.target }} bash scripts/package.sh
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
+
+      # ---- bundle-integrity marker ----
+      - name: Compute §2.a shape signals for the just-built archive
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            *-windows) ext=zip ;;
+            *)          ext=tar.xz ;;
+          esac
+          archive="dist/lha-${{ matrix.target }}.$ext"
+          shape_signals() {
+            case "$archive" in
+              *.tar.xz)
+                tar tJf "$archive" 2>/dev/null \
+                  | { grep -cE '/LICENSE$'; \
+                      grep -cE '/TAKEDOWN\.md$'; \
+                      grep -cE '/README\.md$'; \
+                      grep -cE '^[^/]+/src/lha/'; \
+                      grep -cE '/bin/lha$'; \
+                      grep -cE '/man/man1/lha\.1$'; } | tr '\n' '\t'
+                ;;
+              *.zip)
+                unzip -l "$archive" 2>/dev/null \
+                  | { grep -cE '(^|\s)LICENSE\s*$'; \
+                      grep -cE '(^|\s)TAKEDOWN\.md\s*$'; \
+                      grep -cE '(^|\s)README\.md\s*$'; \
+                      grep -cE 'src\\\\lha\\\\'; \
+                      grep -cE 'bin\\\\lha\.exe\s*$'; \
+                      grep -cE 'man\\\\man1\\\\lha\.1\s*$'; } | tr '\n' '\t'
+                ;;
+            esac
+          }
+          shape_signals > ${{ matrix.target }}.shape
+          cat ${{ matrix.target }}.shape
+
+      # ---- upload ----
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.target }}
+          path: |
+            bench.txt
+            smoke.log
+            ${{ matrix.target }}.shape
+            dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ----------------------------------------------------------------
+  # aggregate: download + compose markdown + create issue
+  # ----------------------------------------------------------------
+  report:
+    needs: test
+    if: always()    # always emit the report; users want to see FAIL runs too
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download per-target artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results
+          merge-multiple: true
+
+      - name: Resolve release tag (latest → concrete)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "$INPUT_TAG" = "latest" ]; then
+            # gh release view --json tagName ... is the deterministic API
+            TAG=$(gh release view --repo ljh-sh/lha --json tagName -q .tagName)
+          else
+            TAG="$INPUT_TAG"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Resolved release tag: $TAG"
+
+      - name: Download release assets for SHA + §2.a verification
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_ENV: ${{ env.RELEASE_TAG }}
+        run: |
+          mkdir -p release-assets
+          gh release download "$RELEASE_TAG_ENV" \
+            --repo ljh-sh/lha \
+            --dir release-assets \
+            --pattern 'lha-*' \
+            --clobber
+
+      - name: Compose issue body markdown
+        id: compose
+        env:
+          RELEASE_TAG_ENV: ${{ env.RELEASE_TAG }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_NO: ${{ github.run_number }}
+        run: |
+          bash scripts/test-report-compose.sh > issue-body.md
+          echo "issue-body bytes: $(wc -c < issue-body.md)"
+          head -10 issue-body.md | sed 's/^/  | /'
+
+      - name: Create issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVERRIDE_TITLE: ${{ inputs.issue_title }}
+          RELEASE_TAG_ENV: ${{ env.RELEASE_TAG }}
+          SHA: ${{ github.sha }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          SHORT=${SHA::12}
+          if [ -n "$OVERRIDE_TITLE" ]; then
+            TITLE="$OVERRIDE_TITLE"
+          else
+            TITLE="lha test report ${RELEASE_TAG_ENV} @ ${SHORT} (${DATE})"
+          fi
+          gh issue create \
+            --repo ljh-sh/lha \
+            --title "$TITLE" \
+            --body-file issue-body.md \
+            --label "test-report,automated"
