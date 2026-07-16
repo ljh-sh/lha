@@ -153,7 +153,11 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           file dist/lha-${{ matrix.target }}/bin/lha
-          du -h dist/lha-${{ matrix.target }}.tar.gz
+          du -h dist/lha-${{ matrix.target }}.tar.xz
+          # verify §2.a-bundle shape: src/ + LICENSE + TAKEDOWN must be in the archive
+          tar tJf dist/lha-${{ matrix.target }}.tar.xz \
+            | grep -E '^[^/]+/(bin/lha|src/lha|man/man1/lha\.1|LICENSE|TAKEDOWN\.md|README\.md)(/|$)' \
+            | sort -u
 
       - name: Show file type & size (Windows)
         if: matrix.os == 'windows'
@@ -161,6 +165,12 @@ jobs:
         run: |
           file dist/lha-${{ matrix.target }}/bin/lha.exe
           Get-ChildItem dist/lha-${{ matrix.target }}.zip | Format-Table Name, Length
+          # verify §2.a-bundle shape: src\ + LICENSE + TAKEDOWN must be in the zip
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = "dist/lha-${{ matrix.target }}.zip"
+          [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries.FullName `
+            | Where-Object { $_ -match '^(bin\\lha\.exe|src\\lha\\|man\\man1\\lha\.1|LICENSE|TAKEDOWN\.md|README\.md)(\\|$)' } `
+            | Sort-Object -Unique
 
       # ---- upload artifact ----
       - name: Upload artifact
@@ -183,13 +193,13 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 \
+          find . -type f \( -name '*.tar.xz' -o -name '*.zip' \) -print0 \
             | xargs -0 sha256sum | sed 's|^\([^ ]*\)  \./|\1  |' > SHA256SUMS
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.tar.gz
+            dist/*.tar.xz
             dist/*.zip
             dist/*.sha256
             dist/SHA256SUMS

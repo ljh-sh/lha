@@ -3,6 +3,8 @@
 /dist/
 *.tar.gz
 *.tar.gz.sha256
+*.tar.xz
+*.tar.xz.sha256
 *.zip
 *.zip.sha256
 *.tgz

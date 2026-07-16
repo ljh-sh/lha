@@ -158,7 +158,7 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           file dist/lha-${{ matrix.target }}/bin/lha
-          du -h dist/lha-${{ matrix.target }}.tar.gz
+          du -h dist/lha-${{ matrix.target }}.tar.xz
 
       - name: Show file type & size (Windows)
         if: matrix.os == 'windows'

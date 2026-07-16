@@ -37,10 +37,10 @@ assignees: []
 ## Specifics
 
 **Release asset URL**:
-(e.g. `https://github.com/ljh-sh/lha/releases/tag/v0.6.0.1`)
+(e.g. `https://github.com/ljh-sh/lha/releases/tag/v0.6.0`)
 
 **File / asset in question**:
-(e.g. `lha-v0.6.0.1-aarch64-macos.tar.gz`)
+(e.g. `lha-aarch64-macos.tar.xz`)
 
 **Description of the concern**:
 (be specific — which clause, which file, what's wrong)

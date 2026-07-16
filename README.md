@@ -25,6 +25,11 @@ sudo install -m 0644 lha-*/man/man1/lha.1 /usr/local/share/man/man1/
 man lha
 ```
 
+Each release archive is a **§2.a-bundle**: the binary plus the verbatim
+upstream source under `src/lha/`, the man page, the LICENSE (§1-§7
+verbatim), the README, and the TAKEDOWN contact channel.
+```
+
 ## Usage (1988 CLI, not GNU-getopt)
 
 LHa for UNIX 1.14i CLI is from 1988; there's no `-h` or `--help`.
@@ -105,9 +110,9 @@ glibc/dynamic Linux variant.
 
 | target | runner | linkage | archive |
 |---|---|---|---|
-| `x86_64-linux-musl` | `ubuntu-latest` + Alpine 3.20 docker | fully static musl | `.tar.gz` |
-| `aarch64-linux-musl` | `ubuntu-24.04-arm` + Alpine 3.20 docker | fully static musl | `.tar.gz` |
-| `aarch64-macos` | `macos-14` | static, system libc++/libSystem | `.tar.gz` |
+| `x86_64-linux-musl` | `ubuntu-latest` + Alpine 3.20 docker | fully static musl | `.tar.xz` |
+| `aarch64-linux-musl` | `ubuntu-24.04-arm` + Alpine 3.20 docker | fully static musl | `.tar.xz` |
+| `aarch64-macos` | `macos-14` | static, system libc++/libSystem | `.tar.xz` |
 | `x86_64-windows` | MinGW cross from `ubuntu-latest` | fully static | `.zip` |
 
 > macOS is **Apple Silicon only**. Intel macOS is dropped for the same
@@ -143,7 +148,7 @@ the runtime proof that the musl-static binary works there.
 
 ## Releases
 
-Tags follow `vX.Y.Z`. Each release uploads `lha-<target>.tar.gz` (or
+Tags follow `vX.Y.Z`. Each release uploads `lha-<target>.tar.xz` (or
 `.zip`) plus a `.sha256` per archive and a top-level `SHA256SUMS`. See
 [Releases](https://github.com/ljh-sh/lha/releases).
 
