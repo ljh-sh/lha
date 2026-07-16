@@ -92,12 +92,14 @@ stddev() {
 # --- per-target data collectors ---------------------------------------------
 
 # Layout under $RESULTS_DIR: each per-target artifact is a subdir
-# named after the artifact (test-results-<target>/), and the staging
-# step inside the workflow creates stage/<target>/ within. So:
-#   $RESULTS_DIR/test-results-<target>/stage/<target>/bench.txt
-#   $RESULTS_DIR/test-results-<target>/stage/<target>/smoke.log
-T_BENCH() { echo "$RESULTS_DIR/test-results-$1/stage/$1/bench.txt"; }
-T_SMOKE() { echo "$RESULTS_DIR/test-results-$1/stage/$1/smoke.log"; }
+# named after the artifact (test-results-<target>/). The per-target
+# workflow stages files under stage/<target>/ and uploads that
+# directory; actions/upload-artifact@v4 with `path: stage/` zips the
+# CONTENTS, so the artifact unzipes to:
+#   $RESULTS_DIR/test-results-<target>/<target>/bench.txt
+#   $RESULTS_DIR/test-results-<target>/<target>/smoke.log
+T_BENCH() { echo "$RESULTS_DIR/test-results-$1/$1/bench.txt"; }
+T_SMOKE() { echo "$RESULTS_DIR/test-results-$1/$1/smoke.log"; }
 
 # Smaller wrapper: bench_stat2 target op median|stddev
 bench_stat2() {
@@ -163,9 +165,9 @@ bundle_shape_row() {
 		_l=$(unzip -l "$_asset" 2>/dev/null | grep -cE '(^|\s)LICENSE\s*$')
 		_t=$(unzip -l "$_asset" 2>/dev/null | grep -cE '(^|\s)TAKEDOWN\.md\s*$')
 		_r=$(unzip -l "$_asset" 2>/dev/null | grep -cE '(^|\s)README\.md\s*$')
-		_s=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'src\\\\lha\\\\')
-		_b=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'bin\\\\lha\.exe\s*$')
-		_m=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'man\\\\man1\\\\lha\.1\s*$')
+		_s=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'src\\lha\\')
+		_b=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'bin\\lha\.exe\s*$')
+		_m=$(unzip -l "$_asset" 2>/dev/null | grep -cE 'man\\man1\\lha\.1\s*$')
 		;;
 	*)
 		echo "$_tg|no|unsupported|—|—"

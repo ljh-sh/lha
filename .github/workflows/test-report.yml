@@ -198,9 +198,9 @@ jobs:
                   | { grep -cE '(^|\s)LICENSE\s*$' || true; \
                       grep -cE '(^|\s)TAKEDOWN\.md\s*$' || true; \
                       grep -cE '(^|\s)README\.md\s*$' || true; \
-                      grep -cE 'src\\\\lha\\\\' || true; \
-                      grep -cE 'bin\\\\lha\.exe\s*$' || true; \
-                      grep -cE 'man\\\\man1\\\\lha\.1\s*$' || true; } | tr '\n' '\t'
+                      grep -cE 'src\\lha\\' || true; \
+                      grep -cE 'bin\\lha\.exe\s*$' || true; \
+                      grep -cE 'man\\man1\\lha\.1\s*$' || true; } | tr '\n' '\t'
                 ;;
             esac
           }
