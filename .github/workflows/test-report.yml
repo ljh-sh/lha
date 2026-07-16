@@ -144,8 +144,24 @@ jobs:
           echo "smoke OK: informational-only" | tee -a smoke.log
 
       # ---- bench (capture) ----
+      # Musl: the build target lives INSIDE the Alpine container (at
+      # /w/build/src/lha) — the host path (${{ github.workspace }})
+      # doesn't have it. Run the bench inside the same container.
+      - name: Run N=5 bench (musl, inside Alpine)
+        if: matrix.libc == 'musl'
+        run: >
+          docker run --rm --platform linux/${{ matrix.docker_arch }}
+          -v "$PWD":/w -w /w alpine:3.20 sh -c '
+          apk add --no-cache bash coreutils >/dev/null
+          && BENCH_BIN=/w/build/src/lha
+             BENCH_N=5
+             BENCH_LABEL=${{ matrix.target }}
+             bash /w/scripts/bench.sh
+          ' 2>&1 | tee bench.txt
+        continue-on-error: true
+
       - name: Run N=5 bench (host)
-        if: matrix.os != 'windows'
+        if: matrix.os != 'windows' && matrix.libc != 'musl'
         run: |
           BENCH_BIN="${{ github.workspace }}/build/src/lha" \
             BENCH_N=5 \
@@ -157,11 +173,14 @@ jobs:
         shell: msys2 {0}
         continue-on-error: true
         run: |
+          # MSYS2 maps ${{ github.workspace }} to a C:\.../...-style path;
+          # msys2 bash sees it as a forward-slash POSIX path, so this is OK.
+          # lha.exe + /tmp hardcode path make full round-trip a known gap.
           BENCH_BIN="${{ github.workspace }}/build/src/lha.exe" \
             BENCH_N=5 \
             BENCH_LABEL="${{ matrix.target }}" \
             bash scripts/bench.sh 2>&1 | tee bench.txt \
-            || echo "(bench failed on windows; OK)" > bench.txt
+            || echo "(bench failed on windows; /tmp hardcode in upstream; OK)" > bench.txt
 
       # ---- package so the artifact contains the actual archive too ----
       - name: Package (Linux / macOS)
