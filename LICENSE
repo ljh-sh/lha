@@ -26,11 +26,81 @@ This repository distributes two kinds of material:
 
 (a) The vendored LHa source tree under `upstream/lha/`, including the
     `lha` binary produced from it. That material is **not** MIT-licensed;
-    it carries the original LHa terms (see NOTICE.md). The MIT terms above
-    apply only to the wrapper layer — `scripts/`, `.github/workflows/`,
-    `README.md`, `NOTICE.md`, `.gitattributes`, and `.gitignore`.
+    it carries the original LHa terms (see NOTICE.md and §1-§7 below).
+    The MIT terms above apply only to the wrapper layer — `scripts/`,
+    `.github/workflows/`, `README.md`, `NOTICE.md`, `TAKEDOWN.md`,
+    `.gitattributes`, and `.gitignore`.
 
 (b) The `lha` binary produced by the dist layer is a work derived from the
     vendored LHa source and is therefore subject to the LHa redistribution
-    terms (NOTICE.md → "Upstream license"). The MIT terms above do not grant
-    any rights to the `lha` binary itself.
+    terms (see §1-§7 below). The MIT terms above do not grant any rights
+    to the `lha` binary itself.
+
+================================================================================
+
+## §1-§7: ORIGINAL LHA LICENSE — verbatim, from `upstream/lha/man/lha.man`
+
+(English translation by Osamu Aoki, the Debian lha packager, in
+`https://sources.debian.org/copyright/license/lha/1.14i-10.3/`.
+The Japanese original lives in `upstream/lha/man/lha.man`.)
+
+> Permission is given for redistribution, copy, and modification
+> provided following conditions are met.
+>
+> 1. Do not remove copyright clause.
+>
+> 2. Distribution shall conform:
+>    a.  The content of redistribution (i.e., source code,
+>        documentation, and reference guide for programmers) shall
+>        include original contents.  If contents are modified,
+>        the document clearly indicating the fact of modification
+>        must be included.
+>    b.  If LHa is redistributed with added values, you must put
+>        your best effort to include them.  Also the document
+>        clearly indicating that added value was added must be
+>        included.
+>    c.  Binary only distribution is not allowed (including
+>        added value ones.)
+>
+> 3. You need to put effort to distribute the latest version.
+>    (This is not your duty.)
+>
+>    NB: Distribution on Internet is free.  Please notify me
+>    by e-mail or other means prior to the distribution if
+>    distribution is done through non-Internet media (Magazine,
+>    CDROM etc.)  If not, make sure to Email me later.
+>
+> 4. Any damage caused by the existence and use of this program
+>    will not be compensated.
+>
+> 5. Author will not be responsible to correct errors even if
+>    program is defective.
+>
+> 6. This program, either as a part of this or as a whole of
+>    this, may be included into other programs.  In this case,
+>    that program is not LHa and can not call itself LHa.
+>
+> 7. For commercial use, in addition to above conditions,
+>    following condition needs to be met.
+>    a.  The program whose content is mainly this program can
+>        not be used commercially.
+>    b.  If the recipient of commercial use deems inappropriate
+>        as a program user, you must not distribute.
+>    c.  If used as a method for the installation, you must
+>        not force others to use this program.  In this case,
+>        commercial user will perform its work while taking full
+>        responsibility of its outcome.
+>    d.  If added value is done under the commercial use by
+>        using this program, commercial user shall provide its
+>        support.
+
+## Authors (per upstream `man/lha.man`)
+
+LHa for UNIX 1.14i-ac20220213 — original authorship:
+
+- LHarc 0.01-1.00: **Yooichi Tagawa** (1988-1989)
+- LHa 0.01-1.00: **Masaru Oki** (1991-1992)
+- LHa 1.10-1.14: **Nobutaka Watazaki** (1993-1995)
+- LHa 1.14a-1.14i: **Tsugio Okamoto** (1996-2000)
+- LHA-PMA for UNIX: **Maarten ter Huurne** (2000)
+- Autoconfiscated: **Koji Arai** (2001-2008) — modern maintainer of `jca02266/lha`
