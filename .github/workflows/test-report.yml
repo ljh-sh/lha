@@ -147,8 +147,9 @@ jobs:
       - name: Run N=5 bench (host)
         if: matrix.os != 'windows'
         run: |
-          BENCH_BIN="${{ github.workspace }}/build/src/lha"
-          BENCH_N=5 BENCH_LABEL="${{ matrix.target }}" \
+          BENCH_BIN="${{ github.workspace }}/build/src/lha" \
+            BENCH_N=5 \
+            BENCH_LABEL="${{ matrix.target }}" \
             bash scripts/bench.sh 2>&1 | tee bench.txt
 
       - name: Run N=5 bench (Windows)
@@ -156,9 +157,11 @@ jobs:
         shell: msys2 {0}
         continue-on-error: true
         run: |
-          BENCH_BIN="${{ github.workspace }}/build/src/lha.exe"
-          BENCH_N=5 BENCH_LABEL="${{ matrix.target }}" \
-            bash scripts/bench.sh 2>&1 | tee bench.txt || echo "(bench failed on windows; OK)" > bench.txt
+          BENCH_BIN="${{ github.workspace }}/build/src/lha.exe" \
+            BENCH_N=5 \
+            BENCH_LABEL="${{ matrix.target }}" \
+            bash scripts/bench.sh 2>&1 | tee bench.txt \
+            || echo "(bench failed on windows; OK)" > bench.txt
 
       # ---- package so the artifact contains the actual archive too ----
       - name: Package (Linux / macOS)

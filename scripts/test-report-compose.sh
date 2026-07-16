@@ -132,13 +132,19 @@ smoke_outcome() {
 }
 
 # Count of upstream lha-testN tests passed/total in smoke.log.
+# Each upstream test prints lines like "lha-testN #M ... ok" or
+# "lha-testN ... ok"; we count unique test numbers with any "ok" line.
 smoke_test_count() {
 	_t="$1"
 	_l="$(T_SMOKE "$_t")"
 	[ -f "$_l" ] || { echo '0/0'; return; }
-	# count "ok" lines (loose — upstream uses "ok" marker)
-	pass=$(grep -cE '^==> lha-test[0-9]+ \.\.\. ok' "$_l" 2>/dev/null || true)
-	# total from "lha-test1..19" header
+	# pass = unique lha-testN values that have at least one ok line
+	pass=$(grep -oE '^lha-test[0-9]+ .*\bok\b' "$_l" \
+		| grep -oE '^lha-test[0-9]+' | sort -u | wc -l | tr -d ' ')
+	# fail = unique lha-testN values that have an ok line + at least one FAIL/Failed line
+	fail_count=$(grep -oE '^lha-test[0-9]+ .*\b(FAIL|Failed)\b' "$_l" \
+		| grep -oE '^lha-test[0-9]+' | sort -u | wc -l | tr -d ' ')
+	# total = from header "lha-test1..19"
 	total=$(grep -oE 'lha-test[0-9]+\.\.[0-9]+' "$_l" \
 		| head -1 | sed -E 's/^lha-test([0-9]+)\.\.([0-9]+)/\2/')
 	[ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null \
