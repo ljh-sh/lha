@@ -176,6 +176,7 @@ jobs:
       - name: Compute §2.a shape signals for the just-built archive
         shell: bash
         run: |
+          set +e   # grep returns 1 on no-match; that's a "0" answer, not an error
           case "${{ matrix.target }}" in
             *-windows) ext=zip ;;
             *)          ext=tar.xz ;;
@@ -185,21 +186,21 @@ jobs:
             case "$archive" in
               *.tar.xz)
                 tar tJf "$archive" 2>/dev/null \
-                  | { grep -cE '/LICENSE$'; \
-                      grep -cE '/TAKEDOWN\.md$'; \
-                      grep -cE '/README\.md$'; \
-                      grep -cE '^[^/]+/src/lha/'; \
-                      grep -cE '/bin/lha$'; \
-                      grep -cE '/man/man1/lha\.1$'; } | tr '\n' '\t'
+                  | { grep -cE '/LICENSE$' || true; \
+                      grep -cE '/TAKEDOWN\.md$' || true; \
+                      grep -cE '/README\.md$' || true; \
+                      grep -cE '^[^/]+/src/lha/' || true; \
+                      grep -cE '/bin/lha$' || true; \
+                      grep -cE '/man/man1/lha\.1$' || true; } | tr '\n' '\t'
                 ;;
               *.zip)
                 unzip -l "$archive" 2>/dev/null \
-                  | { grep -cE '(^|\s)LICENSE\s*$'; \
-                      grep -cE '(^|\s)TAKEDOWN\.md\s*$'; \
-                      grep -cE '(^|\s)README\.md\s*$'; \
-                      grep -cE 'src\\\\lha\\\\'; \
-                      grep -cE 'bin\\\\lha\.exe\s*$'; \
-                      grep -cE 'man\\\\man1\\\\lha\.1\s*$'; } | tr '\n' '\t'
+                  | { grep -cE '(^|\s)LICENSE\s*$' || true; \
+                      grep -cE '(^|\s)TAKEDOWN\.md\s*$' || true; \
+                      grep -cE '(^|\s)README\.md\s*$' || true; \
+                      grep -cE 'src\\\\lha\\\\' || true; \
+                      grep -cE 'bin\\\\lha\.exe\s*$' || true; \
+                      grep -cE 'man\\\\man1\\\\lha\.1\s*$' || true; } | tr '\n' '\t'
                 ;;
             esac
           }
@@ -268,6 +269,8 @@ jobs:
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_NO: ${{ github.run_number }}
+          RESULTS_DIR: ${{ github.workspace }}/results
+          ASSETS_DIR: ${{ github.workspace }}/release-assets
         run: |
           bash scripts/test-report-compose.sh > issue-body.md
           echo "issue-body bytes: $(wc -c < issue-body.md)"
