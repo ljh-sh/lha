@@ -207,16 +207,24 @@ jobs:
           shape_signals > ${{ matrix.target }}.shape
           cat ${{ matrix.target }}.shape
 
+      # ---- bundle-integrity marker + per-target staging ----
+      - name: Stage per-target outputs under ${{ matrix.target }}/
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p "stage/${{ matrix.target }}"
+          cp bench.txt "stage/${{ matrix.target }}/"
+          cp smoke.log "stage/${{ matrix.target }}/"
+          cp "${{ matrix.target }}.shape" "stage/${{ matrix.target }}/"
+          cp -r dist "stage/${{ matrix.target }}/"
+          ls -R "stage/${{ matrix.target }}" | head -20
+
       # ---- upload ----
       - name: Upload test artifact
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.target }}
-          path: |
-            bench.txt
-            smoke.log
-            ${{ matrix.target }}.shape
-            dist/
+          path: stage/
           if-no-files-found: error
           retention-days: 7
 
@@ -230,11 +238,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download per-target artifacts
+      - name: Download per-target artifacts (one subdir per target)
         uses: actions/download-artifact@v4
         with:
           path: results
-          merge-multiple: true
+          # Without merge-multiple, each named artifact lands in
+          # results/<artifact-name>/ — so we end up with
+          #   results/test-results-<target>/stage/<target>/bench.txt
+          # and the compose script's expectations line up directly.
 
       - name: Resolve release tag (latest → concrete)
         env:

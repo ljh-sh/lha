@@ -91,10 +91,18 @@ stddev() {
 
 # --- per-target data collectors ---------------------------------------------
 
+# Layout under $RESULTS_DIR: each per-target artifact is a subdir
+# named after the artifact (test-results-<target>/), and the staging
+# step inside the workflow creates stage/<target>/ within. So:
+#   $RESULTS_DIR/test-results-<target>/stage/<target>/bench.txt
+#   $RESULTS_DIR/test-results-<target>/stage/<target>/smoke.log
+T_BENCH() { echo "$RESULTS_DIR/test-results-$1/stage/$1/bench.txt"; }
+T_SMOKE() { echo "$RESULTS_DIR/test-results-$1/stage/$1/smoke.log"; }
+
 # Smaller wrapper: bench_stat2 target op median|stddev
 bench_stat2() {
 	_target="$1" _op="$2" _stat="$3"
-	_b="$RESULTS_DIR/test-results-$_target/bench.txt"
+	_b="$(T_BENCH "$_target")"
 	[ -f "$_b" ] || { echo 'n/a'; return; }
 	awk -v op="$_op" '$1 == op {print $3}' "$_b" > "$WORK/samples.$$"
 	[ -s "$WORK/samples.$$" ] || { echo 'n/a'; rm -f "$WORK/samples.$$"; return; }
@@ -108,7 +116,7 @@ bench_stat2() {
 # Smoke outcome for $TARGET — looks for "smoke OK" line.
 smoke_outcome() {
 	_t="$1"
-	_l="$RESULTS_DIR/test-results-$_t/smoke.log"
+	_l="$(T_SMOKE "$_t")"
 	[ -f "$_l" ] || { echo '—missing—'; return; }
 	if grep -qE '^smoke OK' "$_l"; then
 		echo 'PASS'
@@ -124,7 +132,7 @@ smoke_outcome() {
 # Count of upstream lha-testN tests passed/total in smoke.log.
 smoke_test_count() {
 	_t="$1"
-	_l="$RESULTS_DIR/test-results-$_t/smoke.log"
+	_l="$(T_SMOKE "$_t")"
 	[ -f "$_l" ] || { echo '0/0'; return; }
 	# count "ok" lines (loose — upstream uses "ok" marker)
 	pass=$(grep -cE '^==> lha-test[0-9]+ \.\.\. ok' "$_l" 2>/dev/null || true)
@@ -202,7 +210,7 @@ EOF
 		INFO) emoji='ⓘ INFO' ;;
 		*)    emoji='— ?' ;;
 		esac
-		bfile="$RESULTS_DIR/test-results-$t/bench.txt"
+		bfile="$(T_BENCH "$t")"
 		bstat='—'
 		[ -f "$bfile" ] && bstat='yes'
 		printf '| `%s` | ✓ | %s (%s) | %s |\n' \
@@ -221,7 +229,7 @@ Time to compress / extract / list a 1 MiB seeded-random blob.
 |---|---|---|---|---|
 EOF
 	for t in $TARGETS; do
-		bfile="$RESULTS_DIR/test-results-$t/bench.txt"
+		bfile="$(T_BENCH "$t")"
 		[ -f "$bfile" ] || { printf '| `%s` | _no bench_ | _no bench_ | _no bench_ | — |\n' "$t"; continue; }
 		c_m=$(bench_stat2 "$t" c median);     c_s=$(bench_stat2 "$t" c stddev)
 		x_m=$(bench_stat2 "$t" x median);     x_s=$(bench_stat2 "$t" x stddev)
